@@ -1,0 +1,39 @@
+{
+  "name": "@helixbi/web",
+  "private": true,
+  "version": "2.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -b && vite build",
+    "lint": "eslint src",
+    "typecheck": "tsc --noEmit",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@helixbi/types": "workspace:*",
+    "@helixbi/db": "workspace:*",
+    "@helixbi/state": "workspace:*",
+    "@helixbi/tokens": "workspace:*",
+    "@helixbi/ui": "workspace:*",
+    "@helixbi/visuals": "workspace:*",
+    "@duckdb/duckdb-wasm": "^1.28.0",
+    "apache-arrow": "^15.0.2",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@types/node": "^20.12.7",
+    "@types/react": "^18.3.1",
+    "@types/react-dom": "^18.3.1",
+    "@vitejs/plugin-react": "^4.2.1",
+    "eslint": "^9.17.0",
+    "eslint-plugin-react-hooks": "^5.0.0",
+    "eslint-plugin-react-refresh": "^0.4.16",
+    "globals": "^15.14.0",
+    "typescript": "^5.4.5",
+    "typescript-eslint": "^8.18.2",
+    "vite": "^5.2.11"
+  }
+}

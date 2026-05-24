@@ -1,10 +1,6 @@
-import { Dashboard } from '@helixbi/types'
+export { migrateDashboard, validateDashboardSchema } from './migrations/runner'
 
 export function compileFormula(expression: string): string {
   // Pratt Parser placeholder
   return `SELECT ${expression}`
-}
-
-export function migrateDashboard(dashboard: Dashboard): Dashboard {
-  return dashboard
 }

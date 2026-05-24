@@ -7,9 +7,12 @@
   "scripts": {
     "build": "tsc",
     "lint": "eslint src --ext .ts",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run src"
   },
   "dependencies": {
-    "@helixbi/types": "workspace:*"
+    "@helixbi/types": "workspace:*",
+    "ajv": "^8.13.0",
+    "ajv-formats": "^3.0.1"
   }
 }

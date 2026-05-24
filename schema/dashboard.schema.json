@@ -1,0 +1,238 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "HelixBI Dashboard Schema",
+  "type": "object",
+  "properties": {
+    "version": { "type": "string" },
+    "id": { "type": "string", "format": "uuid" },
+    "title": { "type": "string" },
+    "description": { "type": "string" },
+    "createdAt": { "type": "string", "format": "date-time" },
+    "updatedAt": { "type": "string", "format": "date-time" },
+    "createdBy": { "type": "string" },
+    "orgId": { "type": "string" },
+    "isPublic": { "type": "boolean" },
+    "deletedAt": { "type": ["string", "null"], "format": "date-time" },
+    "dataSources": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string" },
+          "name": { "type": "string" },
+          "type": { "type": "string" },
+          "config": { "type": "object" },
+          "schema": {
+            "type": "object",
+            "properties": {
+              "version": { "type": "integer" },
+              "columns": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "name": { "type": "string" },
+                    "type": { "type": "string" },
+                    "role": { "type": "string", "enum": ["dimension", "measure"] },
+                    "nullable": { "type": "boolean" },
+                    "distinctCount": { "type": "integer" },
+                    "sampleValues": { "type": "array", "items": { "type": "string" } },
+                    "min": { "type": "number" },
+                    "max": { "type": "number" },
+                    "mean": { "type": "number" }
+                  },
+                  "required": ["name", "type", "role", "nullable"]
+                }
+              }
+            },
+            "required": ["version", "columns"]
+          },
+          "lastRefreshedAt": { "type": "string", "format": "date-time" }
+        },
+        "required": ["id", "name", "type", "config", "lastRefreshedAt"]
+      }
+    },
+    "semanticModel": {
+      "type": "object",
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "modelFile": { "type": ["string", "null"] }
+      },
+      "required": ["enabled", "modelFile"]
+    },
+    "calculatedFields": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string" },
+          "name": { "type": "string" },
+          "expression": { "type": "string" },
+          "dependsOn": { "type": "array", "items": { "type": "string" } },
+          "dataSource": { "type": "string" },
+          "outputType": { "type": "string" },
+          "sqlExpression": { "type": ["string", "null"] },
+          "validated": { "type": "boolean" },
+          "validatedAt": { "type": "string", "format": "date-time" }
+        },
+        "required": ["id", "name", "expression", "dependsOn", "dataSource", "outputType", "validated", "validatedAt"]
+      }
+    },
+    "widgets": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string" },
+          "type": { "type": "string" },
+          "title": { "type": "string" },
+          "position": {
+            "type": "object",
+            "properties": {
+              "x": { "type": "integer" },
+              "y": { "type": "integer" },
+              "w": { "type": "integer" },
+              "h": { "type": "integer" },
+              "minW": { "type": "integer" },
+              "minH": { "type": "integer" }
+            },
+            "required": ["x", "y", "w", "h"]
+          },
+          "dataSource": { "type": "string" },
+          "query": {
+            "type": "object",
+            "properties": {
+              "dimensions": { "type": "array", "items": { "type": "string" } },
+              "measures": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "column": { "type": "string" },
+                    "aggregation": { "type": "string", "enum": ["SUM", "AVG", "COUNT", "MIN", "MAX"] },
+                    "alias": { "type": "string" }
+                  },
+                  "required": ["column", "aggregation", "alias"]
+                }
+              },
+              "filters": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "column": { "type": "string" },
+                    "operator": { "type": "string", "enum": ["EQUALS", "NOT_EQUALS", "GREATER_THAN", "LESS_THAN", "IN", "CONTAINS"] },
+                    "value": {}
+                  },
+                  "required": ["column", "operator", "value"]
+                }
+              },
+              "orderBy": {
+                "type": "object",
+                "properties": {
+                  "column": { "type": "string" },
+                  "direction": { "type": "string", "enum": ["ASC", "DESC"] }
+                },
+                "required": ["column", "direction"]
+              },
+              "limit": { "type": "integer" },
+              "cardinalityGuard": {
+                "type": "object",
+                "properties": {
+                  "enabled": { "type": "boolean" },
+                  "maxDistinct": { "type": "integer" }
+                },
+                "required": ["enabled", "maxDistinct"]
+              }
+            },
+            "required": ["dimensions", "measures", "filters"]
+          },
+          "config": { "type": "object" },
+          "cache": {
+            "type": "object",
+            "properties": {
+              "ttlSeconds": { "type": "integer" },
+              "isRealtime": { "type": "boolean" }
+            },
+            "required": ["ttlSeconds", "isRealtime"]
+          },
+          "accessibility": {
+            "type": "object",
+            "properties": {
+              "ariaLabel": { "type": "string" },
+              "altText": { "type": "string" }
+            },
+            "required": ["ariaLabel", "altText"]
+          }
+        },
+        "required": ["id", "type", "title", "position", "dataSource", "query", "config"]
+      }
+    },
+    "globalFilters": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string" },
+          "type": { "type": "string" },
+          "column": { "type": "string" },
+          "dataSource": { "type": "string" },
+          "value": {},
+          "label": { "type": "string" }
+        },
+        "required": ["id", "type", "column", "dataSource", "value", "label"]
+      }
+    },
+    "crossFilterLinks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string" },
+          "sourceWidget": { "type": "string" },
+          "targetWidgets": { "type": "array", "items": { "type": "string" } },
+          "bidirectional": { "type": "boolean" },
+          "columnMapping": {
+            "type": "object",
+            "additionalProperties": { "type": "string" }
+          }
+        },
+        "required": ["id", "sourceWidget", "targetWidgets", "bidirectional", "columnMapping"]
+      }
+    },
+    "layout": {
+      "type": "object",
+      "properties": {
+        "cols": { "type": "integer" },
+        "rowHeight": { "type": "integer" },
+        "margin": { "type": "array", "items": { "type": "integer" }, "minItems": 2, "maxItems": 2 },
+        "containerPadding": { "type": "array", "items": { "type": "integer" }, "minItems": 2, "maxItems": 2 },
+        "canvasBackground": { "type": "string" },
+        "snapToGrid": { "type": "boolean" },
+        "theme": { "type": "string" },
+        "responsive": {
+          "type": "object",
+          "additionalProperties": { "type": "integer" }
+        }
+      },
+      "required": ["cols", "rowHeight", "margin", "containerPadding", "canvasBackground", "snapToGrid", "theme", "responsive"]
+    },
+    "schemaHistory": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "version": { "type": "string" },
+          "migratedAt": { "type": "string", "format": "date-time" },
+          "migratedBy": { "type": "string" }
+        },
+        "required": ["version", "migratedAt", "migratedBy"]
+      }
+    }
+  },
+  "required": [
+    "version", "id", "title", "description", "createdAt", "updatedAt", "createdBy", "orgId",
+    "isPublic", "deletedAt", "dataSources", "semanticModel", "calculatedFields", "widgets",
+    "globalFilters", "crossFilterLinks", "layout", "schemaHistory"
+  ]
+}
