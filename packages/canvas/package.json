@@ -1,0 +1,22 @@
+{
+  "name": "@helixbi/canvas",
+  "version": "2.0.0",
+  "license": "AGPL-3.0",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "lint": "eslint src --ext .ts,.tsx",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@helixbi/types": "workspace:*",
+    "@helixbi/state": "workspace:*",
+    "react-grid-layout": "^1.4.4",
+    "yjs": "^13.6.14"
+  },
+  "peerDependencies": {
+    "react": "^18.0.0",
+    "react-dom": "^18.0.0"
+  }
+}
