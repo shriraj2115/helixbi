@@ -1,0 +1,17 @@
+{
+  "name": "@helixbi/db",
+  "version": "2.0.0",
+  "license": "AGPL-3.0",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "lint": "eslint src --ext .ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@helixbi/types": "workspace:*",
+    "@duckdb/duckdb-wasm": "^1.28.0",
+    "apache-arrow": "^15.0.2"
+  }
+}
