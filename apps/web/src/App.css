@@ -540,3 +540,66 @@ body {
   border-radius: 8px;
   margin-top: 8px;
 }
+
+/* Dashboard Canvas & Widgets CSS styling */
+.dashboard-canvas-section {
+  grid-column: 2;
+  margin-top: 24px;
+}
+
+.dashboard-canvas {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(360px, 1fr));
+  gap: 20px;
+  margin-top: 16px;
+}
+
+.widget-card {
+  background-color: var(--surface-color);
+  border: var(--card-border);
+  border-radius: 12px;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+  position: relative;
+  transition: transform var(--transition-speed);
+}
+
+.widget-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.2);
+}
+
+.widget-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 12px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+  padding-bottom: 8px;
+}
+
+.widget-title {
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: #f3f4f6;
+}
+
+.widget-info {
+  font-size: 0.7rem;
+  color: var(--text-muted);
+}
+
+.widget-body {
+  height: 200px;
+  width: 100%;
+  position: relative;
+}
+
+.composer-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+

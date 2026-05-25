@@ -5,6 +5,7 @@ export { parseAndCompileFormula, compileASTToSQL, extractASTDependencies } from 
 export { Lexer } from './formula/lexer'
 export { Parser } from './formula/parser'
 export { generateViewSQL } from './formula/view'
+export { compileVisualQueryToSQL } from './formula/query'
 
 export function compileFormula(expression: string): string {
   const { sqlExpression } = parseAndCompileFormula(expression)

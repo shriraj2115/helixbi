@@ -1,8 +1,10 @@
-import { useState, useRef } from 'react'
+import { useState, useRef, useEffect } from 'react'
 import * as duckdb from '@duckdb/duckdb-wasm'
 import { useDashboardStore } from '@helixbi/state'
-import { compileFormula, generateViewSQL, parseAndCompileFormula } from '@helixbi/engine'
-import { CalculatedField } from '@helixbi/types'
+import { compileFormula, generateViewSQL, parseAndCompileFormula, compileVisualQueryToSQL } from '@helixbi/engine'
+import { canvasManager } from '@helixbi/canvas'
+import { visualRegistry } from '@helixbi/visuals'
+import { CalculatedField, Widget, VisualQuery } from '@helixbi/types'
 import './App.css'
 
 const MANUAL_BUNDLES: duckdb.DuckDBBundles = {
@@ -34,10 +36,28 @@ function App() {
   const [cfError, setCfError] = useState<string | null>(null)
   const [cfPreviewSQL, setCfPreviewSQL] = useState<string | null>(null)
 
+  // Widget Composer form state
+  const [widgetTitle, setWidgetTitle] = useState('')
+  const [widgetType, setWidgetType] = useState('builtin.bar_chart')
+  const [widgetDim, setWidgetDim] = useState('')
+  const [widgetMeas, setWidgetMeas] = useState('')
+  const [widgetAgg, setWidgetAgg] = useState<'SUM' | 'AVG' | 'COUNT' | 'MIN' | 'MAX'>('SUM')
+
   // Zustand Store
-  const { calculatedFields, addCalculatedField, removeCalculatedField } = useDashboardStore()
+  const { 
+    calculatedFields, addCalculatedField, removeCalculatedField,
+    widgets, addWidget, removeWidget, setWidgets
+  } = useDashboardStore()
   
   const fileInputRef = useRef<HTMLInputElement>(null)
+
+  // Synchronize widgets list with Yjs collaborative canvas
+  useEffect(() => {
+    const unsubscribe = canvasManager.syncYjsToState((ywidgets) => {
+      setWidgets(ywidgets)
+    })
+    return () => unsubscribe()
+  }, [setWidgets])
 
   // Step 1: Initialize DuckDB WASM
   const initDuckDB = async () => {
@@ -98,6 +118,12 @@ function App() {
       
       setColumns(cols)
       setCsvUploaded(true)
+
+      // Set default dimensions/measures inside form if columns exist
+      if (cols.length > 0) {
+        setWidgetDim(cols[0] || '')
+        setWidgetMeas(cols[0] || '')
+      }
 
       // Initialize the projection view
       const viewSQL = generateViewSQL(targetTable, calculatedFields, cols)
@@ -249,6 +275,53 @@ function App() {
     removeCalculatedField(id)
     await rebuildDuckDBView(updatedFields)
   }
+
+  // Step 6: Handle Visual Canvas Widgets
+  const handleAddWidget = (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!widgetTitle.trim() || !widgetDim || !widgetMeas) return
+
+    const query: VisualQuery = {
+      dimensions: [widgetDim],
+      measures: [
+        {
+          column: widgetMeas,
+          aggregation: widgetAgg,
+          alias: `${widgetMeas}_${widgetAgg}`
+        }
+      ],
+      filters: []
+    }
+
+    const newWidget: Widget = {
+      id: `w_${Date.now()}`,
+      type: widgetType,
+      title: widgetTitle.trim(),
+      position: { x: 0, y: 0, w: 6, h: 4 },
+      dataSource: 'data_table_view',
+      query,
+      config: {}
+    }
+
+    const updatedWidgets = [...widgets, newWidget]
+    addWidget(newWidget)
+    canvasManager.syncStateToYjs(updatedWidgets)
+
+    // Reset Form
+    setWidgetTitle('')
+  }
+
+  const handleDeleteWidget = (id: string) => {
+    const updatedWidgets = widgets.filter(w => w.id !== id)
+    removeWidget(id)
+    canvasManager.syncStateToYjs(updatedWidgets)
+  }
+
+  // Ingested columns + calculated columns
+  const allColumns = [
+    ...columns,
+    ...calculatedFields.map(cf => cf.name)
+  ]
 
   return (
     <div className="app-container">
@@ -424,11 +497,97 @@ function App() {
               Ingest a CSV data source first to unlock Calculated Field design panel.
             </div>
           )}
+
+          {/* Widget Composer Panel */}
+          <h2 className="section-spacing">4. Add Visual Widget</h2>
+          {csvUploaded ? (
+            <form onSubmit={handleAddWidget} className="calc-field-form">
+              <div className="form-group">
+                <label htmlFor="w-title">Widget Title</label>
+                <input
+                  id="w-title"
+                  type="text"
+                  className="form-control"
+                  placeholder="e.g. Sales by Category"
+                  value={widgetTitle}
+                  onChange={(e) => setWidgetTitle(e.target.value)}
+                  required
+                />
+              </div>
+
+              <div className="form-group">
+                <label htmlFor="w-type">Chart Type</label>
+                <select
+                  id="w-type"
+                  className="form-control"
+                  value={widgetType}
+                  onChange={(e) => setWidgetType(e.target.value)}
+                >
+                  <option value="builtin.bar_chart">Bar Chart</option>
+                  <option value="builtin.line_chart">Line Chart</option>
+                </select>
+              </div>
+
+              <div className="composer-row">
+                <div className="form-group">
+                  <label htmlFor="w-dim">Dimension (X-Axis)</label>
+                  <select
+                    id="w-dim"
+                    className="form-control"
+                    value={widgetDim}
+                    onChange={(e) => setWidgetDim(e.target.value)}
+                  >
+                    {allColumns.map(col => (
+                      <option key={col} value={col}>{col}</option>
+                    ))}
+                  </select>
+                </div>
+
+                <div className="form-group">
+                  <label htmlFor="w-meas">Measure</label>
+                  <select
+                    id="w-meas"
+                    className="form-control"
+                    value={widgetMeas}
+                    onChange={(e) => setWidgetMeas(e.target.value)}
+                  >
+                    {allColumns.map(col => (
+                      <option key={col} value={col}>{col}</option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              <div className="form-group">
+                <label htmlFor="w-agg">Aggregation</label>
+                <select
+                  id="w-agg"
+                  className="form-control"
+                  value={widgetAgg}
+                  onChange={(e) => setWidgetAgg(e.target.value as any)}
+                >
+                  <option value="SUM">SUM</option>
+                  <option value="AVG">AVG</option>
+                  <option value="COUNT">COUNT</option>
+                  <option value="MIN">MIN</option>
+                  <option value="MAX">MAX</option>
+                </select>
+              </div>
+
+              <button type="submit" className="btn btn-secondary btn-tiny" disabled={!widgetTitle || !widgetDim || !widgetMeas}>
+                Add Chart Widget
+              </button>
+            </form>
+          ) : (
+            <div className="calc-tip">
+              Ingest a CSV data source first to design visual queries.
+            </div>
+          )}
         </section>
 
         {/* Query Editor & Analytics Console */}
         <section className="card query-console">
-          <h2>4. Analytical Query Console</h2>
+          <h2>5. Analytical Query Console</h2>
           <div className="query-editor-wrapper">
             <textarea
               className="query-input"
@@ -483,7 +642,7 @@ function App() {
 
         {/* Results Pane */}
         <section className="card results-panel">
-          <h2>5. Output Datagrid</h2>
+          <h2>6. Output Datagrid</h2>
           {queryError && (
             <div className="error-alert">
               <strong>Query Error:</strong>
@@ -520,7 +679,124 @@ function App() {
             </div>
           )}
         </section>
+
+        {/* Dashboard Visual Canvas (Task 16) */}
+        {csvUploaded && widgets.length > 0 && (
+          <section className="dashboard-canvas-section">
+            <h2>7. Dashboard Visual Canvas (Collaborative Yjs Sync Active)</h2>
+            <div className="dashboard-canvas">
+              {widgets.map((widget) => (
+                <WidgetRenderer 
+                  key={widget.id} 
+                  widget={widget} 
+                  db={db}
+                  rebuildTrigger={calculatedFields.length + calculatedFields.map(f => f.expression + f.name).join('')}
+                  onDelete={handleDeleteWidget}
+                />
+              ))}
+            </div>
+          </section>
+        )}
       </main>
+    </div>
+  )
+}
+
+interface WidgetRendererProps {
+  widget: Widget
+  db: duckdb.AsyncDuckDB | null
+  rebuildTrigger: string
+  onDelete: (id: string) => void
+}
+
+function WidgetRenderer({ widget, db, rebuildTrigger, onDelete }: WidgetRendererProps) {
+  const containerRef = useRef<HTMLDivElement>(null)
+  const [data, setData] = useState<any[] | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const [loading, setLoading] = useState(false)
+
+  // Re-run the visual query against DuckDB WASM whenever DB or calculated fields change
+  useEffect(() => {
+    if (!db) return
+    let active = true
+    const run = async () => {
+      try {
+        setLoading(true)
+        const sql = compileVisualQueryToSQL('data_table_view', widget.query)
+        const conn = await db.connect()
+        const res = await conn.query(sql)
+        await conn.close()
+
+        if (active) {
+          setData(res.toArray().map((row: any) => {
+            const obj: Record<string, any> = {}
+            for (const key of Object.keys(row)) {
+              const val = row[key]
+              obj[key] = typeof val === 'bigint' ? val.toString() : val
+            }
+            return obj
+          }))
+          setError(null)
+        }
+      } catch (err: any) {
+        if (active) {
+          setError(err.message || 'Failed to query widget data')
+        }
+      } finally {
+        if (active) setLoading(false)
+      }
+    }
+
+    run()
+    return () => {
+      active = false
+    }
+  }, [db, widget.query, rebuildTrigger])
+
+  // Draw chart in the visual container using the registered plugin
+  useEffect(() => {
+    if (containerRef.current && data) {
+      const plugin = visualRegistry.get(widget.type)
+      if (plugin) {
+        plugin.render(containerRef.current, widget, data)
+      }
+    }
+  }, [data, widget])
+
+  const measure = widget.query.measures[0]
+  const dimension = widget.query.dimensions[0]
+  const subtitle = measure && dimension
+    ? `${measure.aggregation}(${measure.column}) by ${dimension}`
+    : 'Custom Visualization'
+
+  return (
+    <div className="card widget-card">
+      <div className="widget-header">
+        <div>
+          <div className="widget-title">{widget.title}</div>
+          <div className="widget-info">{subtitle}</div>
+        </div>
+        <button 
+          className="btn-delete"
+          onClick={() => onDelete(widget.id)}
+          title="Delete Widget"
+        >
+          🗑
+        </button>
+      </div>
+
+      <div className="widget-body" ref={containerRef}>
+        {loading && (
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: '#9ca3af', fontSize: '0.8rem' }}>
+            Running query...
+          </div>
+        )}
+        {error && (
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: '#ef4444', fontSize: '0.75rem', textAlign: 'center', padding: '10px' }}>
+            Query Error: {error}
+          </div>
+        )}
+      </div>
     </div>
   )
 }

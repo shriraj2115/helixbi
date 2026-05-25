@@ -44,6 +44,9 @@ importers:
       '@duckdb/duckdb-wasm':
         specifier: ^1.28.0
         version: 1.32.0
+      '@helixbi/canvas':
+        specifier: workspace:*
+        version: link:../../packages/canvas
       '@helixbi/db':
         specifier: workspace:*
         version: link:../../packages/db
