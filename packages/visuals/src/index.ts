@@ -67,7 +67,7 @@ visualRegistry.register({
         justify-content: flex-end;
       `
 
-      const { columnFormats } = useDashboardStore.getState()
+      const { columnFormats, crossFilters } = useDashboardStore.getState()
       const format = columnFormats[measureExpr.column] || 'default'
       const formattedVal = formatValue(val, format)
 
@@ -76,14 +76,33 @@ visualRegistry.register({
       barVal.style.cssText = 'font-size: 0.7rem; color: #9ca3af; margin-bottom: 4px; font-family: monospace;'
 
       const bar = document.createElement('div')
+      
+      const activeCross = crossFilters[widget.id]
+      const isSelected = activeCross && activeCross.value === label
+      const isAnySelected = !!activeCross
+
       bar.style.cssText = `
         width: 100%;
         height: 0%;
-        background: linear-gradient(180deg, #6366f1 0%, #4f46e5 100%);
+        background: ${isSelected ? 'linear-gradient(180deg, #10b981 0%, #059669 100%)' : 'linear-gradient(180deg, #6366f1 0%, #4f46e5 100%)'};
         border-radius: 4px 4px 0 0;
-        transition: height 0.6s cubic-bezier(0.16, 1, 0.3, 1);
-        box-shadow: 0 4px 10px rgba(99, 102, 241, 0.15);
+        transition: height 0.6s cubic-bezier(0.16, 1, 0.3, 1), opacity 0.2s, background 0.2s;
+        box-shadow: ${isSelected ? '0 0 15px rgba(16, 185, 129, 0.4)' : '0 4px 10px rgba(99, 102, 241, 0.15)'};
+        cursor: pointer;
+        opacity: ${isAnySelected && !isSelected ? '0.3' : '1'};
       `
+      
+      bar.addEventListener('click', () => {
+        const currentCross = useDashboardStore.getState().crossFilters[widget.id]
+        if (currentCross && currentCross.value === label) {
+          useDashboardStore.getState().setCrossFilter(widget.id, null)
+        } else {
+          useDashboardStore.getState().setCrossFilter(widget.id, {
+            column: dimensionKey,
+            value: label
+          })
+        }
+      })
       
       setTimeout(() => {
         bar.style.height = `${pct}%`
@@ -169,10 +188,19 @@ visualRegistry.register({
 
         <!-- Point circles -->
         ${points.map(p => {
-          const { columnFormats } = useDashboardStore.getState()
+          const { columnFormats, crossFilters } = useDashboardStore.getState()
           const format = columnFormats[measureExpr.column] || 'default'
           const formattedVal = formatValue(p.val, format)
-          return `<circle cx="${p.x}" cy="${p.y}" r="3.5" fill="#10b981" stroke="#0f111a" stroke-width="1.5" style="cursor: pointer;" title="${p.label}: ${formattedVal}"/>`
+          
+          const activeCross = crossFilters[widget.id]
+          const isSelected = activeCross && activeCross.value === p.label
+          const isAnySelected = !!activeCross
+          
+          const fill = isSelected ? '#10b981' : (isAnySelected ? 'rgba(16, 185, 129, 0.2)' : '#10b981')
+          const radius = isSelected ? '5.5' : '3.5'
+          const stroke = isSelected ? '#ffffff' : '#0f111a'
+          
+          return `<circle cx="${p.x}" cy="${p.y}" r="${radius}" fill="${fill}" stroke="${stroke}" stroke-width="1.5" style="cursor: pointer; transition: all 0.2s;" title="${p.label}: ${formattedVal}" data-label="${p.label}"/>`
         }).join('')}
 
         <!-- Labels -->
@@ -183,5 +211,23 @@ visualRegistry.register({
         }).join('')}
       </svg>
     `
+
+    // Attach click listeners to all circles for cross-filtering
+    const circles = element.querySelectorAll('circle')
+    circles.forEach((circle) => {
+      circle.addEventListener('click', (e) => {
+        const label = (e.currentTarget as HTMLElement).getAttribute('data-label')
+        if (label === null) return
+        const currentCross = useDashboardStore.getState().crossFilters[widget.id]
+        if (currentCross && currentCross.value === label) {
+          useDashboardStore.getState().setCrossFilter(widget.id, null)
+        } else {
+          useDashboardStore.getState().setCrossFilter(widget.id, {
+            column: dimensionKey,
+            value: label
+          })
+        }
+      })
+    })
   }
 })

@@ -55,4 +55,22 @@ describe('compileVisualQueryToSQL', () => {
       'VisualQuery must contain at least one dimension or measure.'
     )
   })
+
+  it('should compile query with filters correctly', () => {
+    const query: VisualQuery = {
+      dimensions: ['REGION'],
+      measures: [
+        { column: 'AMOUNT', aggregation: 'SUM', alias: 'Total_Sales' }
+      ],
+      filters: [
+        { column: 'COUNTRY', operator: 'EQUALS', value: 'USA' },
+        { column: 'AMOUNT', operator: 'GREATER_THAN', value: 100 },
+        { column: 'STATUS', operator: 'IN', value: ['active', 'pending'] }
+      ]
+    }
+    const sql = compileVisualQueryToSQL('data_table_view', query)
+    expect(sql).toBe(
+      'SELECT "REGION", SUM("AMOUNT") AS "Total_Sales" FROM data_table_view WHERE "COUNTRY" = \'USA\' AND "AMOUNT" > 100 AND "STATUS" IN (\'active\', \'pending\') GROUP BY "REGION" ORDER BY "REGION" ASC LIMIT 1000'
+    )
+  })
 })

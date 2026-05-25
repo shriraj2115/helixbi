@@ -1,5 +1,41 @@
 import { VisualQuery } from '@helixbi/types'
 
+function compileFilterNode(node: { column: string; operator: string; value: any }): string {
+  const col = `"${node.column}"`
+  const val = node.value
+
+  const formatValueForSQL = (v: any): string => {
+    if (typeof v === 'string') {
+      return `'${v.replace(/'/g, "''")}'`
+    }
+    if (v === null || v === undefined) {
+      return 'NULL'
+    }
+    return String(v)
+  }
+
+  switch (node.operator) {
+    case 'EQUALS':
+      return val === null ? `${col} IS NULL` : `${col} = ${formatValueForSQL(val)}`
+    case 'NOT_EQUALS':
+      return val === null ? `${col} IS NOT NULL` : `${col} != ${formatValueForSQL(val)}`
+    case 'GREATER_THAN':
+      return `${col} > ${formatValueForSQL(val)}`
+    case 'LESS_THAN':
+      return `${col} < ${formatValueForSQL(val)}`
+    case 'IN':
+      if (Array.isArray(val)) {
+        if (val.length === 0) return 'FALSE'
+        return `${col} IN (${val.map(formatValueForSQL).join(', ')})`
+      }
+      return `${col} = ${formatValueForSQL(val)}`
+    case 'CONTAINS':
+      return `${col} LIKE '%${String(val).replace(/'/g, "''")}%'`
+    default:
+      return 'TRUE'
+  }
+}
+
 /**
  * Compiles a structured VisualQuery configuration into a DuckDB SQL string.
  * Automatically handles dimensions, aggregations, groupings, ordering, and limits.
@@ -30,6 +66,12 @@ export function compileVisualQueryToSQL(tableName: string, query: VisualQuery): 
 
   sql += selectItems.join(', ')
   sql += ` FROM ${tableName}`
+
+  // 2.5. Filters/WHERE clause
+  if (query.filters && query.filters.length > 0) {
+    const filterClauses = query.filters.map(compileFilterNode)
+    sql += ` WHERE ${filterClauses.join(' AND ')}`
+  }
 
   // 3. GROUP BY clauses for OLAP aggregation
   if (query.dimensions.length > 0 && query.measures.length > 0) {

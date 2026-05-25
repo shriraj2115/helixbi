@@ -651,3 +651,100 @@ body {
   height: 28px;
 }
 
+/* Global Dashboard Filters Bar styling */
+.global-filter-bar {
+  margin-bottom: 24px;
+  padding: 16px 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.filter-bar-header {
+  display: flex;
+  align-items: center;
+  width: 100%;
+}
+
+.filter-bar-header h3 {
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: #e5e7eb;
+}
+
+.filter-bar-composer {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  flex-wrap: wrap;
+}
+
+.form-group-horizontal {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.form-group-horizontal label {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.active-filters-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+  border-top: 1px solid rgba(255, 255, 255, 0.04);
+  padding-top: 12px;
+}
+
+.filter-badge {
+  display: flex;
+  align-items: center;
+  background-color: rgba(99, 102, 241, 0.08);
+  border: 1px solid rgba(99, 102, 241, 0.15);
+  border-radius: 6px;
+  padding: 4px 8px;
+  font-size: 0.75rem;
+  gap: 6px;
+}
+
+.filter-badge-col {
+  color: var(--text-muted);
+}
+
+.filter-badge-val {
+  font-weight: 600;
+  color: #a5b4fc;
+}
+
+.filter-badge-remove {
+  background: transparent;
+  border: none;
+  color: var(--error-color);
+  font-size: 0.95rem;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.filter-badge-remove:hover {
+  color: #f87171;
+}
+
+.cardinality-warning {
+  background-color: rgba(245, 158, 11, 0.08);
+  border: 1px solid rgba(245, 158, 11, 0.15);
+  color: #fcd34d;
+  padding: 6px 10px;
+  border-radius: 6px;
+  font-size: 0.7rem;
+  margin-bottom: 8px;
+  text-align: center;
+}
+

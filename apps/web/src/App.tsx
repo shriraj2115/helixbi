@@ -43,12 +43,49 @@ function App() {
   const [widgetDim, setWidgetDim] = useState('')
   const [widgetMeas, setWidgetMeas] = useState('')
   const [widgetAgg, setWidgetAgg] = useState<'SUM' | 'AVG' | 'COUNT' | 'MIN' | 'MAX'>('SUM')
+  const [widgetLimit, setWidgetLimit] = useState(10)
+
+  // Dashboard metadata editing state
+  const [editingTitle, setEditingTitle] = useState(false)
+  const [editingDesc, setEditingDesc] = useState(false)
+  const [tempTitle, setTempTitle] = useState('')
+  const [tempDesc, setTempDesc] = useState('')
+
+  // Global filter composer state
+  const [selectedFilterCol, setSelectedFilterCol] = useState('')
+  const [selectedFilterVal, setSelectedFilterVal] = useState('')
+  const [filterColOptions, setFilterColOptions] = useState<string[]>([])
+
+  const loadFilterOptions = async (col: string) => {
+    if (!db || !col) return
+    try {
+      const conn = await db.connect()
+      const res = await conn.query(`SELECT DISTINCT "${col}" FROM data_table_view WHERE "${col}" IS NOT NULL LIMIT 100`)
+      await conn.close()
+      const vals = res.toArray().map((row: any) => String(row[col]))
+      setFilterColOptions(vals)
+    } catch (err) {
+      console.error('Error fetching filter options:', err)
+    }
+  }
+
+  useEffect(() => {
+    if (selectedFilterCol) {
+      loadFilterOptions(selectedFilterCol)
+    } else {
+      setFilterColOptions([])
+    }
+    setSelectedFilterVal('')
+  }, [selectedFilterCol])
 
   // Zustand Store
   const { 
     calculatedFields, addCalculatedField, removeCalculatedField,
     widgets, addWidget, removeWidget, setWidgets,
-    columnFormats, columnLabels, setColumnFormat, setColumnLabel, loadDashboard
+    columnFormats, columnLabels, setColumnFormat, setColumnLabel, loadDashboard,
+    globalFilters, addGlobalFilter, removeGlobalFilter, clearGlobalFilters,
+    crossFilters, clearCrossFilters,
+    title, description, setDashboardTitle, setDashboardDescription
   } = useDashboardStore()
   
   const fileInputRef = useRef<HTMLInputElement>(null)
@@ -293,7 +330,12 @@ function App() {
           alias: `${widgetMeas}_${widgetAgg}`
         }
       ],
-      filters: []
+      filters: [],
+      limit: widgetLimit,
+      cardinalityGuard: {
+        enabled: true,
+        maxDistinct: 30
+      }
     }
 
     const newWidget: Widget = {
@@ -411,6 +453,60 @@ function App() {
     reader.readAsText(file)
   }
 
+  const exportQueryResult = async (format: 'csv' | 'parquet') => {
+    if (!db || !sqlQuery) return
+    try {
+      setLoading(true)
+      const conn = await db.connect()
+      
+      const fileName = `query_export_${Date.now()}.${format}`
+      const copyQuery = `COPY (${sqlQuery}) TO '${fileName}' (FORMAT ${format.toUpperCase()})`
+      
+      setStatus(`Generating ${format.toUpperCase()} file via DuckDB...`)
+      await conn.query(copyQuery)
+      
+      const buffer = await db.copyFileToBuffer(fileName)
+      await conn.close()
+      
+      const blob = new Blob([buffer as any], { type: format === 'csv' ? 'text/csv' : 'application/octet-stream' })
+      const url = URL.createObjectURL(blob)
+      const downloadAnchor = document.createElement('a')
+      downloadAnchor.setAttribute("href", url)
+      downloadAnchor.setAttribute("download", `helixbi-export-${Date.now()}.${format}`)
+      document.body.appendChild(downloadAnchor)
+      downloadAnchor.click()
+      downloadAnchor.remove()
+      URL.revokeObjectURL(url)
+      
+      setStatus('Export complete')
+    } catch (err: any) {
+      console.error(err)
+      alert(`Export failed: ${err.message || err}`)
+      setStatus('Export error')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const startEditingTitle = () => {
+    setTempTitle(title)
+    setEditingTitle(true)
+  }
+  const saveTitle = () => {
+    if (tempTitle.trim()) {
+      setDashboardTitle(tempTitle.trim())
+    }
+    setEditingTitle(false)
+  }
+  const startEditingDesc = () => {
+    setTempDesc(description)
+    setEditingDesc(true)
+  }
+  const saveDesc = () => {
+    setDashboardDescription(tempDesc.trim())
+    setEditingDesc(false)
+  }
+
   // Ingested columns + calculated columns
   const allColumns = [
     ...columns,
@@ -422,8 +518,39 @@ function App() {
       <header className="hero-header">
         <div className="branding">
           <span className="cyber-badge">PHASE 1 POC</span>
-          <h1>HelixBI</h1>
-          <p className="subtitle">High-Performance Browser-Native Analytical Engine</p>
+          {editingTitle ? (
+            <input
+              type="text"
+              className="form-control"
+              style={{ fontSize: '1.8rem', fontWeight: 700, padding: '4px 8px', background: '#0b0d14', border: '1px solid var(--primary-color)', color: '#f3f4f6', borderRadius: '8px', width: '300px', display: 'block', marginBottom: '8px' }}
+              value={tempTitle}
+              onChange={(e) => setTempTitle(e.target.value)}
+              onBlur={saveTitle}
+              onKeyDown={(e) => e.key === 'Enter' && saveTitle()}
+              autoFocus
+            />
+          ) : (
+            <h1 onClick={startEditingTitle} style={{ cursor: 'pointer' }} title="Click to rename dashboard">
+              {title} ✏️
+            </h1>
+          )}
+
+          {editingDesc ? (
+            <input
+              type="text"
+              className="form-control"
+              style={{ fontSize: '0.9rem', padding: '4px 8px', background: '#0b0d14', border: '1px solid var(--primary-color)', color: '#9ca3af', borderRadius: '6px', width: '400px', display: 'block' }}
+              value={tempDesc}
+              onChange={(e) => setTempDesc(e.target.value)}
+              onBlur={saveDesc}
+              onKeyDown={(e) => e.key === 'Enter' && saveDesc()}
+              autoFocus
+            />
+          ) : (
+            <p className="subtitle" onClick={startEditingDesc} style={{ cursor: 'pointer' }} title="Click to edit description">
+              {description || 'Click to add description'} ✏️
+            </p>
+          )}
         </div>
         <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
           <button className="btn btn-secondary" onClick={handleExportDashboard} title="Export Dashboard JSON config">
@@ -445,6 +572,100 @@ function App() {
           </div>
         </div>
       </header>
+
+      {csvUploaded && (
+        <section className="card global-filter-bar">
+          <div className="filter-bar-header">
+            <h3>🔍 Global Dashboard Filters</h3>
+            {globalFilters.length > 0 && (
+              <button className="btn btn-tiny" onClick={clearGlobalFilters} style={{ marginLeft: 'auto' }}>
+                Clear All
+              </button>
+            )}
+            {Object.keys(crossFilters).length > 0 && (
+              <button 
+                className="btn btn-tiny" 
+                onClick={clearCrossFilters} 
+                style={{ 
+                  marginLeft: globalFilters.length > 0 ? '10px' : 'auto', 
+                  backgroundColor: 'rgba(239, 68, 68, 0.1)', 
+                  borderColor: 'rgba(239, 68, 68, 0.2)', 
+                  color: '#fca5a5' 
+                }}
+              >
+                Clear Cross-Filters ({Object.keys(crossFilters).length})
+              </button>
+            )}
+          </div>
+
+          <div className="filter-bar-composer">
+            <div className="form-group-horizontal">
+              <label htmlFor="filter-col-select">Column</label>
+              <select
+                id="filter-col-select"
+                className="form-control form-control-sm"
+                value={selectedFilterCol}
+                onChange={(e) => setSelectedFilterCol(e.target.value)}
+              >
+                <option value="">-- Select Column --</option>
+                {allColumns.map(col => (
+                  <option key={col} value={col}>{columnLabels[col] || col}</option>
+                ))}
+              </select>
+            </div>
+
+            {selectedFilterCol && (
+              <div className="form-group-horizontal">
+                <label htmlFor="filter-val-select">Value</label>
+                <select
+                  id="filter-val-select"
+                  className="form-control form-control-sm"
+                  value={selectedFilterVal}
+                  onChange={(e) => setSelectedFilterVal(e.target.value)}
+                >
+                  <option value="">-- Select Value --</option>
+                  {filterColOptions.map(opt => (
+                    <option key={opt} value={opt}>{opt}</option>
+                  ))}
+                </select>
+              </div>
+            )}
+
+            <button
+              className="btn btn-tiny"
+              disabled={!selectedFilterCol || !selectedFilterVal}
+              onClick={() => {
+                addGlobalFilter({
+                  id: 'gf_' + Date.now(),
+                  type: 'select',
+                  column: selectedFilterCol,
+                  dataSource: 'data_table_view',
+                  value: selectedFilterVal,
+                  label: selectedFilterCol
+                })
+                setSelectedFilterCol('')
+                setSelectedFilterVal('')
+              }}
+            >
+              + Apply Filter
+            </button>
+          </div>
+
+          {globalFilters.length > 0 && (
+            <div className="active-filters-list">
+              {globalFilters.map(gf => (
+                <div key={gf.id} className="filter-badge">
+                  <span className="filter-badge-col">{columnLabels[gf.column] || gf.column}:</span>
+                  <span className="filter-badge-val">{String(gf.value)}</span>
+                  <button className="filter-badge-remove" onClick={() => removeGlobalFilter(gf.id)}>
+                    ×
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+        </section>
+      )}
 
       <main className="dashboard-grid">
         {/* Control Center */}
@@ -683,6 +904,22 @@ function App() {
                 </select>
               </div>
 
+              <div className="form-group">
+                <label htmlFor="w-limit">Result Limit (Top N)</label>
+                <select
+                  id="w-limit"
+                  className="form-control"
+                  value={widgetLimit}
+                  onChange={(e) => setWidgetLimit(Number(e.target.value))}
+                >
+                  <option value="5">5</option>
+                  <option value="10">10</option>
+                  <option value="25">25</option>
+                  <option value="50">50</option>
+                  <option value="100">100</option>
+                </select>
+              </div>
+
               <button type="submit" className="btn btn-secondary btn-tiny" disabled={!widgetTitle || !widgetDim || !widgetMeas}>
                 Add Chart Widget
               </button>
@@ -793,7 +1030,19 @@ function App() {
 
         {/* Results Pane */}
         <section className="card results-panel">
-          <h2>7. Output Datagrid</h2>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+            <h2>7. Output Datagrid</h2>
+            {queryResult && queryResult.length > 0 && (
+              <div style={{ display: 'flex', gap: '8px' }}>
+                <button className="btn btn-tiny" onClick={() => exportQueryResult('csv')} title="Export current query result to CSV">
+                  📄 Export CSV
+                </button>
+                <button className="btn btn-tiny" onClick={() => exportQueryResult('parquet')} title="Export current query result to Parquet">
+                  📦 Export Parquet
+                </button>
+              </div>
+            )}
+          </div>
           {queryError && (
             <div className="error-alert">
               <strong>Query Error:</strong>
@@ -866,28 +1115,64 @@ function WidgetRenderer({ widget, db, rebuildTrigger, onDelete }: WidgetRenderer
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
 
-  // Re-run the visual query against DuckDB WASM whenever DB or calculated fields change
+  const { globalFilters, crossFilters } = useDashboardStore()
+  const [showCardinalityWarning, setShowCardinalityWarning] = useState(false)
+
+  // Re-run the visual query against DuckDB WASM whenever DB, calculated fields, or filters change
   useEffect(() => {
     if (!db) return
     let active = true
     const run = async () => {
       try {
         setLoading(true)
-        const sql = compileVisualQueryToSQL('data_table_view', widget.query)
+
+        // Compose global and cross filters (from other widgets)
+        const composedFilters = [...(widget.query.filters || [])]
+
+        globalFilters.forEach(gf => {
+          if (gf.value !== undefined && gf.value !== null && gf.value !== '') {
+            composedFilters.push({
+              column: gf.column,
+              operator: 'EQUALS',
+              value: gf.value
+            })
+          }
+        })
+
+        Object.entries(crossFilters).forEach(([otherWidgetId, cf]) => {
+          if (otherWidgetId !== widget.id && cf && cf.value !== undefined && cf.value !== null && cf.value !== '') {
+            composedFilters.push({
+              column: cf.column,
+              operator: 'EQUALS',
+              value: cf.value
+            })
+          }
+        })
+
+        const activeQuery = {
+          ...widget.query,
+          filters: composedFilters
+        }
+
+        const sql = compileVisualQueryToSQL('data_table_view', activeQuery)
         const conn = await db.connect()
         const res = await conn.query(sql)
         await conn.close()
 
         if (active) {
-          setData(res.toArray().map((row: any) => {
+          const rows = res.toArray().map((row: any) => {
             const obj: Record<string, any> = {}
             for (const key of Object.keys(row)) {
               const val = row[key]
               obj[key] = typeof val === 'bigint' ? val.toString() : val
             }
             return obj
-          }))
+          })
+          setData(rows)
           setError(null)
+
+          const maxDistinct = widget.query.cardinalityGuard?.maxDistinct || 30
+          setShowCardinalityWarning(rows.length >= maxDistinct)
         }
       } catch (err: any) {
         if (active) {
@@ -902,7 +1187,7 @@ function WidgetRenderer({ widget, db, rebuildTrigger, onDelete }: WidgetRenderer
     return () => {
       active = false
     }
-  }, [db, widget.query, rebuildTrigger])
+  }, [db, widget.query, rebuildTrigger, globalFilters, crossFilters])
 
   // Draw chart in the visual container using the registered plugin
   useEffect(() => {
@@ -935,6 +1220,12 @@ function WidgetRenderer({ widget, db, rebuildTrigger, onDelete }: WidgetRenderer
           🗑
         </button>
       </div>
+
+      {showCardinalityWarning && (
+        <div className="cardinality-warning" title="Too many unique values. Rendering may be dense or truncated.">
+          ⚠️ Cardinality limit: Top {widget.query.limit || 10} values shown.
+        </div>
+      )}
 
       <div className="widget-body" ref={containerRef}>
         {loading && (
