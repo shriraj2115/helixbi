@@ -11,7 +11,9 @@
   },
   "dependencies": {
     "@helixbi/types": "workspace:*",
-    "@helixbi/sdk": "workspace:*"
+    "@helixbi/sdk": "workspace:*",
+    "@helixbi/state": "workspace:*",
+    "@helixbi/semantic": "workspace:*"
   },
   "peerDependencies": {
     "react": "^18.0.0",

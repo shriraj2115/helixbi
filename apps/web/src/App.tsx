@@ -4,6 +4,7 @@ import { useDashboardStore } from '@helixbi/state'
 import { compileFormula, generateViewSQL, parseAndCompileFormula, compileVisualQueryToSQL } from '@helixbi/engine'
 import { canvasManager } from '@helixbi/canvas'
 import { visualRegistry } from '@helixbi/visuals'
+import { formatValue } from '@helixbi/semantic'
 import { CalculatedField, Widget, VisualQuery } from '@helixbi/types'
 import './App.css'
 
@@ -46,10 +47,12 @@ function App() {
   // Zustand Store
   const { 
     calculatedFields, addCalculatedField, removeCalculatedField,
-    widgets, addWidget, removeWidget, setWidgets
+    widgets, addWidget, removeWidget, setWidgets,
+    columnFormats, columnLabels, setColumnFormat, setColumnLabel, loadDashboard
   } = useDashboardStore()
   
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const fileConfigInputRef = useRef<HTMLInputElement>(null)
 
   // Synchronize widgets list with Yjs collaborative canvas
   useEffect(() => {
@@ -317,6 +320,97 @@ function App() {
     canvasManager.syncStateToYjs(updatedWidgets)
   }
 
+  const handleExportDashboard = () => {
+    const dashboardData = {
+      $schema: "http://json-schema.org/draft-07/schema#",
+      version: "2.0.0",
+      id: "cf_export_" + Date.now(),
+      title: "HelixBI Exported Dashboard",
+      description: "Exported configuration from HelixBI Web client",
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      createdBy: "HelixBI system",
+      orgId: "org_default",
+      isPublic: false,
+      deletedAt: null,
+      dataSources: [
+        {
+          id: "ds_data_table",
+          name: "data_table",
+          type: "CSV",
+          config: {},
+          lastRefreshedAt: new Date().toISOString()
+        }
+      ],
+      semanticModel: {
+        enabled: true,
+        modelFile: null
+      },
+      calculatedFields,
+      widgets,
+      columnFormats,
+      columnLabels,
+      globalFilters: [],
+      crossFilterLinks: [],
+      layout: {
+        cols: 12,
+        rowHeight: 100,
+        margin: [10, 10],
+        containerPadding: [10, 10],
+        canvasBackground: "#08090f",
+        snapToGrid: true,
+        theme: "dark",
+        responsive: {}
+      },
+      schemaHistory: [
+        {
+          version: "2.0.0",
+          migratedAt: new Date().toISOString(),
+          migratedBy: "HelixBI system"
+        }
+      ]
+    }
+
+    const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(dashboardData, null, 2))
+    const downloadAnchor = document.createElement('a')
+    downloadAnchor.setAttribute("href", dataStr)
+    downloadAnchor.setAttribute("download", `helixbi-dashboard-${Date.now()}.json`)
+    document.body.appendChild(downloadAnchor)
+    downloadAnchor.click()
+    downloadAnchor.remove()
+  }
+
+  const handleImportDashboard = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+
+    const reader = new FileReader()
+    reader.onload = async (event) => {
+      try {
+        const text = event.target?.result
+        if (typeof text !== 'string') return
+        const parsed = JSON.parse(text)
+        
+        if (parsed.version !== '2.0.0') {
+          alert('Error: Imported dashboard must comply with v2.0.0 schema version.')
+          return
+        }
+
+        loadDashboard(parsed)
+        canvasManager.syncStateToYjs(parsed.widgets || [])
+
+        if (db && csvUploaded) {
+          await rebuildDuckDBView(parsed.calculatedFields || [])
+        }
+
+        alert('Dashboard configuration successfully loaded!')
+      } catch (err: any) {
+        alert(`Failed to import dashboard config: ${err.message}`)
+      }
+    }
+    reader.readAsText(file)
+  }
+
   // Ingested columns + calculated columns
   const allColumns = [
     ...columns,
@@ -331,9 +425,24 @@ function App() {
           <h1>HelixBI</h1>
           <p className="subtitle">High-Performance Browser-Native Analytical Engine</p>
         </div>
-        <div className="engine-status-card">
-          <div className={`status-indicator ${db ? 'online' : 'offline'}`} />
-          <span className="status-text">{status}</span>
+        <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
+          <button className="btn btn-secondary" onClick={handleExportDashboard} title="Export Dashboard JSON config">
+            📤 Export Config
+          </button>
+          <button className="btn btn-secondary" onClick={() => fileConfigInputRef.current?.click()} title="Import Dashboard JSON config">
+            📥 Import Config
+          </button>
+          <input
+            type="file"
+            ref={fileConfigInputRef}
+            style={{ display: 'none' }}
+            accept=".json"
+            onChange={handleImportDashboard}
+          />
+          <div className="engine-status-card">
+            <div className={`status-indicator ${db ? 'online' : 'offline'}`} />
+            <span className="status-text">{status}</span>
+          </div>
         </div>
       </header>
 
@@ -583,11 +692,53 @@ function App() {
               Ingest a CSV data source first to design visual queries.
             </div>
           )}
+
+          {/* Semantic Formatting & Metadata Panel */}
+          <h2 className="section-spacing">5. Semantic Formatting</h2>
+          {csvUploaded ? (
+            <div className="semantic-explorer">
+              <div className="calc-tip" style={{ marginBottom: '12px' }}>
+                Define human-readable labels and cell formats for query results & visual charts.
+              </div>
+              <div className="semantic-list">
+                {allColumns.map((col) => (
+                  <div key={col} className="semantic-item">
+                    <span className="semantic-col-name" title={col}>{col}</span>
+                    <div className="semantic-inputs">
+                      <input
+                        type="text"
+                        className="form-control form-control-sm"
+                        placeholder={col}
+                        value={columnLabels[col] || ''}
+                        onChange={(e) => setColumnLabel(col, e.target.value)}
+                        title="Display Label Override"
+                      />
+                      <select
+                        className="form-control form-control-sm"
+                        value={columnFormats[col] || 'default'}
+                        onChange={(e) => setColumnFormat(col, e.target.value)}
+                        title="Value Display Format"
+                      >
+                        <option value="default">Default</option>
+                        <option value="currency">Currency ($)</option>
+                        <option value="percentage">Percentage (%)</option>
+                        <option value="number">Number (1,234)</option>
+                      </select>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : (
+            <div className="calc-tip">
+              Ingest a CSV data source first to configure semantic labeling & formatting.
+            </div>
+          )}
         </section>
 
         {/* Query Editor & Analytics Console */}
         <section className="card query-console">
-          <h2>5. Analytical Query Console</h2>
+          <h2>6. Analytical Query Console</h2>
           <div className="query-editor-wrapper">
             <textarea
               className="query-input"
@@ -642,7 +793,7 @@ function App() {
 
         {/* Results Pane */}
         <section className="card results-panel">
-          <h2>6. Output Datagrid</h2>
+          <h2>7. Output Datagrid</h2>
           {queryError && (
             <div className="error-alert">
               <strong>Query Error:</strong>
@@ -656,15 +807,15 @@ function App() {
                 <thead>
                   <tr>
                     {Object.keys(queryResult[0]).map((key) => (
-                      <th key={key}>{key}</th>
+                      <th key={key}>{columnLabels[key] || key}</th>
                     ))}
                   </tr>
                 </thead>
                 <tbody>
                   {queryResult.map((row, idx) => (
                     <tr key={idx}>
-                      {Object.values(row).map((val: any, cellIdx) => (
-                        <td key={cellIdx}>{String(val)}</td>
+                      {Object.keys(row).map((key, cellIdx) => (
+                        <td key={cellIdx}>{formatValue(row[key], columnFormats[key] || 'default')}</td>
                       ))}
                     </tr>
                   ))}
@@ -683,7 +834,7 @@ function App() {
         {/* Dashboard Visual Canvas (Task 16) */}
         {csvUploaded && widgets.length > 0 && (
           <section className="dashboard-canvas-section">
-            <h2>7. Dashboard Visual Canvas (Collaborative Yjs Sync Active)</h2>
+            <h2>8. Dashboard Visual Canvas (Collaborative Yjs Sync Active)</h2>
             <div className="dashboard-canvas">
               {widgets.map((widget) => (
                 <WidgetRenderer 

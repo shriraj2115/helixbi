@@ -53,6 +53,9 @@ importers:
       '@helixbi/engine':
         specifier: workspace:*
         version: link:../../packages/engine
+      '@helixbi/semantic':
+        specifier: workspace:*
+        version: link:../../packages/semantic
       '@helixbi/state':
         specifier: workspace:*
         version: link:../../packages/state
@@ -214,6 +217,12 @@ importers:
       '@helixbi/sdk':
         specifier: workspace:*
         version: link:../sdk
+      '@helixbi/semantic':
+        specifier: workspace:*
+        version: link:../semantic
+      '@helixbi/state':
+        specifier: workspace:*
+        version: link:../state
       '@helixbi/types':
         specifier: workspace:*
         version: link:../types

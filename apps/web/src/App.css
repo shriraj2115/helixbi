@@ -603,3 +603,51 @@ body {
   gap: 12px;
 }
 
+/* Semantic Metadata Formats styles */
+.semantic-list {
+  max-height: 250px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding-right: 6px;
+  margin-top: 12px;
+}
+
+.semantic-item {
+  background-color: rgba(255, 255, 255, 0.01);
+  border: 1px solid rgba(255, 255, 255, 0.04);
+  border-radius: 8px;
+  padding: 8px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  transition: background-color var(--transition-speed);
+}
+
+.semantic-item:hover {
+  background-color: rgba(255, 255, 255, 0.03);
+}
+
+.semantic-col-name {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.75rem;
+  color: #c7d2fe;
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.semantic-inputs {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+}
+
+.form-control-sm {
+  padding: 4px 8px;
+  font-size: 0.75rem;
+  height: 28px;
+}
+

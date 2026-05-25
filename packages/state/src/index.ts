@@ -41,12 +41,19 @@ interface DashboardState {
   removeWidget: (id: string) => void
   updateWidgetPosition: (id: string, x: number, y: number, w: number, h: number) => void
   setWidgets: (widgets: Widget[]) => void
+  columnFormats: Record<string, string>
+  columnLabels: Record<string, string>
+  setColumnFormat: (col: string, format: string) => void
+  setColumnLabel: (col: string, label: string) => void
+  loadDashboard: (dashboardJson: any) => void
 }
 
 export const useDashboardStore = create<DashboardState>()(
   immer((set) => ({
     calculatedFields: [],
     widgets: [],
+    columnFormats: {},
+    columnLabels: {},
     addCalculatedField: (field) =>
       set((state) => {
         state.calculatedFields.push(field)
@@ -89,6 +96,21 @@ export const useDashboardStore = create<DashboardState>()(
     setWidgets: (widgets) =>
       set((state) => {
         state.widgets = widgets
+      }),
+    setColumnFormat: (col, format) =>
+      set((state) => {
+        state.columnFormats[col] = format
+      }),
+    setColumnLabel: (col, label) =>
+      set((state) => {
+        state.columnLabels[col] = label
+      }),
+    loadDashboard: (dashboardJson) =>
+      set((state) => {
+        state.calculatedFields = dashboardJson.calculatedFields || []
+        state.widgets = dashboardJson.widgets || []
+        state.columnFormats = dashboardJson.columnFormats || {}
+        state.columnLabels = dashboardJson.columnLabels || {}
       }),
   })),
 )

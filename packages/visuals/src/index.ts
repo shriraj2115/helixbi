@@ -1,5 +1,7 @@
 import { VisualPlugin } from '@helixbi/sdk'
 import { Widget } from '@helixbi/types'
+import { useDashboardStore } from '@helixbi/state'
+import { formatValue } from '@helixbi/semantic'
 
 export class VisualRegistry {
   private plugins = new Map<string, VisualPlugin>()
@@ -65,8 +67,12 @@ visualRegistry.register({
         justify-content: flex-end;
       `
 
+      const { columnFormats } = useDashboardStore.getState()
+      const format = columnFormats[measureExpr.column] || 'default'
+      const formattedVal = formatValue(val, format)
+
       const barVal = document.createElement('span')
-      barVal.innerText = val.toLocaleString()
+      barVal.innerText = formattedVal
       barVal.style.cssText = 'font-size: 0.7rem; color: #9ca3af; margin-bottom: 4px; font-family: monospace;'
 
       const bar = document.createElement('div')
@@ -162,9 +168,12 @@ visualRegistry.register({
         ${points.length > 0 ? `<path d="${pathData}" fill="none" stroke="#10b981" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>` : ''}
 
         <!-- Point circles -->
-        ${points.map(p => `
-          <circle cx="${p.x}" cy="${p.y}" r="3.5" fill="#10b981" stroke="#0f111a" stroke-width="1.5" style="cursor: pointer;" title="${p.label}: ${p.val}"/>
-        `).join('')}
+        ${points.map(p => {
+          const { columnFormats } = useDashboardStore.getState()
+          const format = columnFormats[measureExpr.column] || 'default'
+          const formattedVal = formatValue(p.val, format)
+          return `<circle cx="${p.x}" cy="${p.y}" r="3.5" fill="#10b981" stroke="#0f111a" stroke-width="1.5" style="cursor: pointer;" title="${p.label}: ${formattedVal}"/>`
+        }).join('')}
 
         <!-- Labels -->
         ${points.map((p, idx) => {
