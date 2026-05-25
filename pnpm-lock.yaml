@@ -47,6 +47,9 @@ importers:
       '@helixbi/db':
         specifier: workspace:*
         version: link:../../packages/db
+      '@helixbi/engine':
+        specifier: workspace:*
+        version: link:../../packages/engine
       '@helixbi/state':
         specifier: workspace:*
         version: link:../../packages/state
