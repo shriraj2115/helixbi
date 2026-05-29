@@ -1353,3 +1353,441 @@ body.theme-light .drill-modal-close {
   background: rgba(0, 0, 0, 0.04);
   border-color: rgba(0, 0, 0, 0.08);
 }
+
+/* Day 4 Auto-save Notification Banner */
+.autosave-notification {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  background: rgba(245, 158, 11, 0.15);
+  border-bottom: 1px solid rgba(245, 158, 11, 0.3);
+  padding: 10px 20px;
+  color: #fbbf24;
+  font-size: 0.85rem;
+  font-weight: 500;
+  backdrop-filter: blur(10px);
+  position: sticky;
+  top: 0;
+  z-index: 1000;
+}
+
+.autosave-notification .btn-close {
+  background: transparent;
+  border: none;
+  color: #fbbf24;
+  font-size: 1.2rem;
+  cursor: pointer;
+  padding: 0 4px;
+}
+
+/* Day 4 Collaborative sync subbar */
+.collab-subbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  background: rgba(11, 13, 20, 0.6);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  padding: 8px 24px;
+  font-size: 0.8rem;
+  backdrop-filter: blur(12px);
+  position: sticky;
+  top: 0;
+  z-index: 999;
+  gap: 16px;
+}
+
+.collab-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.status-pulse {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  position: relative;
+}
+
+.status-pulse.online {
+  background-color: #10b981;
+  box-shadow: 0 0 8px #10b981;
+}
+
+.status-pulse.offline {
+  background-color: #6b7280;
+}
+
+.status-label {
+  font-weight: 500;
+  color: var(--text-color);
+}
+
+.save-status-indicator {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  margin-left: 12px;
+  background: rgba(255, 255, 255, 0.04);
+  padding: 2px 8px;
+  border-radius: 4px;
+}
+
+.collab-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.peer-avatars {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-right: 8px;
+}
+
+.peer-avatar {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.65rem;
+  font-weight: 700;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  cursor: default;
+}
+
+.peers-text {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  margin-left: 4px;
+}
+
+.collab-settings-dropdown {
+  position: absolute;
+  top: 42px;
+  right: 24px;
+  width: 280px;
+  background: rgba(15, 17, 26, 0.95);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  box-shadow: 0 10px 25px rgba(0, 0, 0, 0.3);
+  padding: 16px;
+  z-index: 1001;
+  border-radius: 12px;
+  backdrop-filter: blur(20px);
+}
+
+.collab-settings-dropdown h4 {
+  margin-top: 0;
+  margin-bottom: 12px;
+  font-size: 0.85rem;
+  color: var(--primary-color);
+}
+
+.collab-settings-dropdown label {
+  font-size: 0.7rem;
+  color: var(--text-muted);
+}
+
+.collab-settings-dropdown input[type="color"] {
+  padding: 0;
+  border: none;
+  width: 100%;
+  height: 30px;
+  border-radius: 4px;
+  cursor: pointer;
+  background: transparent;
+}
+
+.collab-settings-dropdown .help-text {
+  font-size: 0.65rem;
+  color: var(--text-muted);
+  margin-top: 8px;
+  margin-bottom: 0;
+}
+
+/* Day 4 Datagrid input filters */
+.grid-filter-input {
+  width: 100%;
+  background: rgba(15, 17, 26, 0.7);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  color: #e2e8f0;
+  border-radius: 4px;
+  padding: 4px 8px;
+  font-size: 0.75rem;
+  outline: none;
+  transition: all 0.2s;
+}
+
+.grid-filter-input:focus {
+  border-color: var(--primary-color);
+  background: rgba(15, 17, 26, 0.9);
+}
+
+.sortable-header:hover {
+  background: rgba(255, 255, 255, 0.03);
+}
+
+/* Day 4 AI Query Copilot styles */
+.query-copilot-card {
+  border-left: 4px solid var(--primary-color) !important;
+}
+
+.copilot-input-wrapper {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.copilot-input {
+  width: 100%;
+  min-height: 70px;
+  background: rgba(0, 0, 0, 0.2);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 8px;
+  padding: 10px 14px;
+  color: var(--text-color);
+  font-family: inherit;
+  font-size: 0.85rem;
+  resize: vertical;
+  outline: none;
+  transition: border-color 0.2s;
+}
+
+.copilot-input:focus {
+  border-color: var(--primary-color);
+}
+
+.btn-copilot-submit {
+  align-self: flex-end;
+}
+
+.copilot-settings-box {
+  background: rgba(0, 0, 0, 0.15) !important;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.copilot-settings-box h4 {
+  margin-top: 0;
+  margin-bottom: 10px;
+  font-size: 0.8rem;
+  color: var(--text-color);
+}
+
+.copilot-settings-box .help-text {
+  font-size: 0.65rem;
+  color: var(--text-muted);
+  margin-top: 4px;
+  margin-bottom: 0;
+}
+
+.copilot-result-box {
+  background: rgba(99, 102, 241, 0.04);
+  border: 1px solid rgba(99, 102, 241, 0.15);
+  border-radius: 8px;
+  padding: 14px;
+}
+
+.copilot-explanation {
+  font-size: 0.8rem;
+  color: #c7d2fe;
+  margin-bottom: 10px;
+}
+
+.copilot-sql-preview {
+  background: rgba(0, 0, 0, 0.3);
+  border: 1px solid rgba(255, 255, 255, 0.04);
+  border-radius: 6px;
+  padding: 10px 14px;
+  overflow-x: auto;
+}
+
+.copilot-sql-preview pre {
+  margin: 0;
+}
+
+.copilot-sql-preview code {
+  color: #38bdf8;
+  font-family: var(--font-mono);
+  font-size: 0.8rem;
+}
+
+/* Day 4 Auto-save and Version history style */
+.version-history-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.autosave-status-badge {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  border-radius: 8px;
+  padding: 10px;
+}
+
+.autosave-status-badge .icon {
+  font-size: 1.2rem;
+}
+
+.autosave-status-badge strong {
+  font-size: 0.8rem;
+  color: var(--text-color);
+}
+
+.version-list-container h4 {
+  margin-top: 14px;
+  margin-bottom: 8px;
+  font-size: 0.8rem;
+  color: var(--text-color);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+  padding-bottom: 4px;
+}
+
+.version-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 180px;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+.version-item {
+  background: rgba(255, 255, 255, 0.01);
+  border: 1px solid rgba(255, 255, 255, 0.04);
+  border-radius: 6px;
+  padding: 8px 12px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  cursor: pointer;
+  transition: all 0.2s;
+  position: relative;
+}
+
+.version-item:hover {
+  background: rgba(99, 102, 241, 0.03);
+  border-color: rgba(99, 102, 241, 0.15);
+}
+
+.version-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1;
+}
+
+.version-name {
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--text-color);
+}
+
+.version-desc {
+  font-size: 0.7rem;
+  color: var(--text-muted);
+}
+
+.version-meta {
+  display: flex;
+  gap: 8px;
+  font-size: 0.65rem;
+  color: var(--text-muted);
+}
+
+.btn-delete-version {
+  background: transparent;
+  border: none;
+  color: rgba(239, 68, 68, 0.4);
+  cursor: pointer;
+  padding: 4px;
+  border-radius: 4px;
+  font-size: 0.8rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s;
+}
+
+.btn-delete-version:hover {
+  color: rgba(239, 68, 68, 0.9);
+  background: rgba(239, 68, 68, 0.06);
+}
+
+/* Light Theme overrides for Day 4 components */
+body.theme-light .autosave-notification {
+  background: rgba(245, 158, 11, 0.08);
+  border-bottom-color: rgba(245, 158, 11, 0.2);
+  color: #b45309;
+}
+
+body.theme-light .autosave-notification .btn-close {
+  color: #b45309;
+}
+
+body.theme-light .collab-subbar {
+  background: rgba(255, 255, 255, 0.7);
+  border-bottom-color: rgba(0, 0, 0, 0.06);
+}
+
+body.theme-light .collab-settings-dropdown {
+  background: rgba(255, 255, 255, 0.95);
+  border-color: rgba(0, 0, 0, 0.08);
+  box-shadow: 0 10px 25px rgba(0, 0, 0, 0.08);
+}
+
+body.theme-light .grid-filter-input {
+  background: rgba(255, 255, 255, 0.9);
+  border-color: rgba(0, 0, 0, 0.1);
+  color: var(--text-color);
+}
+
+body.theme-light .copilot-input {
+  background: rgba(255, 255, 255, 0.6);
+  border-color: rgba(0, 0, 0, 0.1);
+}
+
+body.theme-light .copilot-settings-box {
+  background: rgba(0, 0, 0, 0.02) !important;
+  border-color: rgba(0, 0, 0, 0.06);
+}
+
+body.theme-light .copilot-result-box {
+  background: rgba(99, 102, 241, 0.02);
+  border-color: rgba(99, 102, 241, 0.1);
+}
+
+body.theme-light .copilot-explanation {
+  color: #312e81;
+}
+
+body.theme-light .copilot-sql-preview {
+  background: rgba(255, 255, 255, 0.8);
+  border-color: rgba(0, 0, 0, 0.05);
+}
+
+body.theme-light .copilot-sql-preview code {
+  color: #0284c7;
+}
+
+body.theme-light .autosave-status-badge {
+  background: rgba(0, 0, 0, 0.01);
+  border-color: rgba(0, 0, 0, 0.04);
+}
+
+body.theme-light .version-item {
+  background: rgba(0, 0, 0, 0.005);
+  border-color: rgba(0, 0, 0, 0.04);
+}
+
+body.theme-light .version-item:hover {
+  background: rgba(99, 102, 241, 0.02);
+  border-color: rgba(99, 102, 241, 0.1);
+}
+

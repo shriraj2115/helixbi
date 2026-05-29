@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useCallback } from 'react'
+import { useState, useRef, useEffect, useCallback, useMemo } from 'react'
 import * as duckdb from '@duckdb/duckdb-wasm'
 import { useUIStore, useDashboardStore, useHistoryStore, captureDashboardSnapshot } from '@helixbi/state'
 import { compileFormula, generateViewSQL, parseAndCompileFormula, compileVisualQueryToSQL, classifyColumnType, generateProfileSQL, generateTopValuesSQL } from '@helixbi/engine'
@@ -6,6 +6,8 @@ import { canvasManager } from '@helixbi/canvas'
 import { visualRegistry } from '@helixbi/visuals'
 import { formatValue } from '@helixbi/semantic'
 import { CalculatedField, Widget, VisualQuery, ColumnProfile, QueryHistoryEntry } from '@helixbi/types'
+import { dashboardDB } from './db'
+import { localTranslateNLToSQL, translateNLToSQLGemini, translateNLToSQLOpenAI } from './copilot'
 import './App.css'
 
 const MANUAL_BUNDLES: duckdb.DuckDBBundles = {
@@ -79,6 +81,39 @@ function App() {
   const [drillDownData, setDrillDownData] = useState<any[] | null>(null)
   const [drillDownLoading, setDrillDownLoading] = useState(false)
 
+  // Day 4: Collaboration State
+  const [collabActive, setCollabActive] = useState(false)
+  const [roomName, setRoomName] = useState('helixbi_collab')
+  const [nickname, setNickname] = useState(() => localStorage.getItem('helixbi_nickname') || `User_${Math.floor(Math.random() * 1000)}`)
+  const [userColor, setUserColor] = useState(() => localStorage.getItem('helixbi_usercolor') || `#${Math.floor(Math.random() * 16777215).toString(16).padStart(6, '0')}`)
+  const [connectedPeers, setConnectedPeers] = useState<any[]>([])
+  const [showCollabSettings, setShowCollabSettings] = useState(false)
+
+  // Day 4: Datagrid Sorting & Filtering State
+  const [sortColumn, setSortColumn] = useState<string | null>(null)
+  const [sortDirection, setSortDirection] = useState<'asc' | 'desc' | null>(null)
+  const [columnFilters, setColumnFilters] = useState<Record<string, string>>({})
+
+  // Day 4: AI Copilot State
+  const [copilotPrompt, setCopilotPrompt] = useState('')
+  const [copilotResult, setCopilotResult] = useState<string | null>(null)
+  const [copilotExplanation, setCopilotExplanation] = useState<string | null>(null)
+  const [copilotLoading, setCopilotLoading] = useState(false)
+  const [copilotError, setCopilotError] = useState<string | null>(null)
+  const [copilotMode, setCopilotMode] = useState<'local' | 'gemini' | 'openai'>(
+    () => (localStorage.getItem('helixbi_copilot_mode') as any) || 'local'
+  )
+  const [geminiKey, setGeminiKey] = useState(() => localStorage.getItem('helixbi_gemini_key') || '')
+  const [openAIKey, setOpenAIKey] = useState(() => localStorage.getItem('helixbi_openai_key') || '')
+  const [showCopilotSettings, setShowCopilotSettings] = useState(false)
+
+  // Day 4: Auto-Save & Version History State
+  const [saveStatus, setSaveStatus] = useState('Ready')
+  const [savedVersions, setSavedVersions] = useState<any[]>([])
+  const [versionNameInput, setVersionNameInput] = useState('')
+  const [versionDescInput, setVersionDescInput] = useState('')
+  const [restoredNotification, setRestoredNotification] = useState<string | null>(null)
+
   const loadFilterOptions = async (col: string) => {
     if (!db || !col) return
     try {
@@ -136,6 +171,107 @@ function App() {
   useEffect(() => {
     document.body.className = `theme-${theme}`
   }, [theme])
+
+  // Day 4: URL Room Parameter Check on Mount
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search)
+    const roomParam = params.get('room')
+    if (roomParam) {
+      setRoomName(roomParam)
+      setCollabActive(true)
+    }
+  }, [])
+
+  // Day 4: WebRTC Connection Lifecycle
+  useEffect(() => {
+    if (collabActive && roomName.trim()) {
+      canvasManager.connectWebRTC(roomName.trim(), nickname, userColor, (peers) => {
+        setConnectedPeers(peers)
+      })
+    } else {
+      canvasManager.disconnectWebRTC()
+      setConnectedPeers([])
+    }
+    return () => {
+      canvasManager.disconnectWebRTC()
+    }
+  }, [collabActive, roomName, nickname, userColor])
+
+  // Day 4: Local Storage Settings Sync
+  useEffect(() => {
+    localStorage.setItem('helixbi_nickname', nickname)
+  }, [nickname])
+
+  useEffect(() => {
+    localStorage.setItem('helixbi_usercolor', userColor)
+  }, [userColor])
+
+  useEffect(() => {
+    localStorage.setItem('helixbi_copilot_mode', copilotMode)
+  }, [copilotMode])
+
+  useEffect(() => {
+    localStorage.setItem('helixbi_gemini_key', geminiKey)
+  }, [geminiKey])
+
+  useEffect(() => {
+    localStorage.setItem('helixbi_openai_key', openAIKey)
+  }, [openAIKey])
+
+  // Day 4: IndexedDB Auto-save Restore on Mount
+  useEffect(() => {
+    const loadSaved = async () => {
+      try {
+        const saved = await dashboardDB.getAutosave()
+        if (saved) {
+          loadDashboard(saved)
+          canvasManager.syncStateToYjs(saved.widgets || [])
+          setRestoredNotification('Restored previous dashboard layout from auto-save. Please re-upload your CSV to run queries.')
+          setTimeout(() => {
+            setRestoredNotification(null)
+          }, 8000)
+        }
+      } catch (err) {
+        console.error('Failed to load autosave:', err)
+      }
+    }
+    loadSaved()
+  }, [loadDashboard])
+
+  // Day 4: Debounced Auto-save to IndexedDB (1.5s delay)
+  useEffect(() => {
+    const unsubscribe = useDashboardStore.subscribe((state) => {
+      if (!state.title && state.widgets.length === 0 && state.calculatedFields.length === 0) {
+        return
+      }
+
+      const dashboardJson = {
+        title: state.title,
+        description: state.description,
+        calculatedFields: state.calculatedFields,
+        widgets: state.widgets,
+        columnFormats: state.columnFormats,
+        columnLabels: state.columnLabels,
+        globalFilters: state.globalFilters,
+        crossFilterExclusions: state.crossFilterExclusions
+      }
+
+      setSaveStatus('Saving...')
+      const timer = setTimeout(async () => {
+        try {
+          await dashboardDB.saveAutosave(dashboardJson)
+          setSaveStatus(`Saved (sync: ${new Date().toLocaleTimeString()})`)
+        } catch (err) {
+          console.error('Auto-save failed:', err)
+          setSaveStatus('Save Error')
+        }
+      }, 1500)
+
+      return () => clearTimeout(timer)
+    })
+
+    return () => unsubscribe()
+  }, [])
 
   // Day 3: Keyboard shortcuts for undo/redo
   useEffect(() => {
@@ -440,6 +576,244 @@ function App() {
     const updatedFields = calculatedFields.filter(f => f.id !== id)
     removeCalculatedField(id)
     await rebuildDuckDBView(updatedFields)
+  }
+
+  // Day 4: Sort Output Grid Click Handler
+  const handleSort = (columnKey: string) => {
+    if (sortColumn === columnKey) {
+      if (sortDirection === 'asc') {
+        setSortDirection('desc')
+      } else if (sortDirection === 'desc') {
+        setSortColumn(null)
+        setSortDirection(null)
+      }
+    } else {
+      setSortColumn(columnKey)
+      setSortDirection('asc')
+    }
+  }
+
+  // Day 4: Memoized sorted and filtered query result
+  const processedQueryResult = useMemo(() => {
+    if (!queryResult) return null
+
+    let data = [...queryResult]
+    // Filter
+    Object.entries(columnFilters).forEach(([col, filterText]) => {
+      if (!filterText) return
+      const text = filterText.toLowerCase()
+      data = data.filter((row) => {
+        const val = row[col]
+        if (val === undefined || val === null) return false
+        return String(val).toLowerCase().includes(text)
+      })
+    })
+
+    // Sort
+    if (sortColumn && sortDirection) {
+      data.sort((a, b) => {
+        const valA = a[sortColumn]
+        const valB = b[sortColumn]
+
+        if (valA === null || valA === undefined) return 1
+        if (valB === null || valB === undefined) return -1
+
+        const isNumA = typeof valA === 'number'
+        const isNumB = typeof valB === 'number'
+
+        if (isNumA && isNumB) {
+          return sortDirection === 'asc' ? valA - valB : valB - valA
+        }
+
+        const strA = String(valA)
+        const strB = String(valB)
+        return sortDirection === 'asc'
+          ? strA.localeCompare(strB, undefined, { numeric: true, sensitivity: 'base' })
+          : strB.localeCompare(strA, undefined, { numeric: true, sensitivity: 'base' })
+      })
+    }
+
+    return data
+  }, [queryResult, sortColumn, sortDirection, columnFilters])
+
+  // Day 4: Version Checkpoints Handlers
+  const refreshVersions = useCallback(async () => {
+    try {
+      const list = await dashboardDB.listVersions()
+      setSavedVersions(list)
+    } catch (err) {
+      console.error('Failed to list versions:', err)
+    }
+  }, [])
+
+  useEffect(() => {
+    refreshVersions()
+  }, [refreshVersions])
+
+  const handleSaveVersion = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!versionNameInput.trim()) return
+
+    const snapshot = captureDashboardSnapshot()
+    try {
+      await dashboardDB.saveVersion(versionNameInput.trim(), versionDescInput.trim(), snapshot)
+      setVersionNameInput('')
+      setVersionDescInput('')
+      refreshVersions()
+    } catch (err) {
+      console.error('Failed to save version:', err)
+      alert('Failed to save version.')
+    }
+  }
+
+  const handleRestoreVersion = async (version: any) => {
+    if (window.confirm(`Are you sure you want to restore version "${version.name}"? This will replace your current dashboard.`)) {
+      const current = captureDashboardSnapshot()
+      pushSnapshot(current)
+      
+      loadDashboard(version.data)
+      canvasManager.syncStateToYjs(version.data.widgets || [])
+    }
+  }
+
+  const handleDeleteVersion = async (id: string, e: React.MouseEvent) => {
+    e.stopPropagation()
+    if (window.confirm('Delete this version checkpoint?')) {
+      try {
+        await dashboardDB.deleteVersion(id)
+        refreshVersions()
+      } catch (err) {
+        console.error('Failed to delete version:', err)
+      }
+    }
+  }
+
+  // Day 4: AI Copilot SQL Generator Handlers
+  const handleCopilotGenerate = async () => {
+    if (!copilotPrompt.trim()) return
+    setCopilotLoading(true)
+    setCopilotError(null)
+    setCopilotResult(null)
+    setCopilotExplanation(null)
+
+    try {
+      if (copilotMode === 'local') {
+        const res = localTranslateNLToSQL(copilotPrompt, columns, columnTypes)
+        setCopilotResult(res.sql)
+        setCopilotExplanation(res.explanation)
+      } else if (copilotMode === 'gemini') {
+        if (!geminiKey) {
+          throw new Error('Gemini API key is required. Check settings.')
+        }
+        const res = await translateNLToSQLGemini(copilotPrompt, columns, columnTypes, geminiKey)
+        setCopilotResult(res.sql)
+        setCopilotExplanation(res.explanation)
+      } else if (copilotMode === 'openai') {
+        if (!openAIKey) {
+          throw new Error('OpenAI API key is required. Check settings.')
+        }
+        const res = await translateNLToSQLOpenAI(copilotPrompt, columns, columnTypes, openAIKey)
+        setCopilotResult(res.sql)
+        setCopilotExplanation(res.explanation)
+      }
+    } catch (err: any) {
+      console.error(err)
+      setCopilotError(err.message || String(err))
+    } finally {
+      setCopilotLoading(false)
+    }
+  }
+
+  const handleApplyCopilotSQL = () => {
+    if (copilotResult) {
+      setSqlQuery(copilotResult)
+      runQuery(copilotResult)
+    }
+  }
+
+  const handleCreateWidgetFromCopilot = () => {
+    if (!copilotResult) return
+
+    const matchSelect = copilotResult.match(/select\s+(.+?)\s+from/i)
+    if (!matchSelect || !matchSelect[1]) return
+
+    const fields = matchSelect[1].split(',').map((s) => {
+      const parts = s.trim().split(/\s+as\s+/i)
+      const clean = (parts[0] || '').replace(/["'`]/g, '').trim()
+      const alias = (parts[1] || parts[0] || '').replace(/["'`]/g, '').trim()
+      return { clean, alias }
+    })
+
+    if (fields.length === 0) return
+
+    let dim = ''
+    let meas = ''
+    let agg: any = 'SUM'
+    let title = `AI: ${copilotPrompt}`
+    let type = 'builtin.bar_chart'
+
+    if (fields.length === 1) {
+      type = 'builtin.kpi_card'
+      meas = fields[0]!.clean
+      if (meas.toUpperCase().includes('COUNT')) {
+        agg = 'COUNT'
+        meas = columns[0] || ''
+      } else if (meas.toUpperCase().includes('AVG')) {
+        agg = 'AVG'
+      } else if (meas.toUpperCase().includes('SUM')) {
+        agg = 'SUM'
+      }
+    } else {
+      const numeric = fields.find((f) => {
+        const origName = columns.find((c) => c.toLowerCase() === f.clean.toLowerCase()) || f.clean
+        const type = (columnTypes[origName] || '').toUpperCase()
+        return (
+          type.includes('INT') ||
+          type.includes('DOUBLE') ||
+          type.includes('FLOAT') ||
+          type.includes('DECIMAL') ||
+          f.clean.toUpperCase().match(/(SUM|AVG|COUNT|MIN|MAX)/)
+        )
+      })
+
+      const categorical = fields.find((f) => f !== numeric)
+      dim = categorical
+        ? columns.find((c) => c.toLowerCase() === categorical.clean.toLowerCase()) || categorical.clean
+        : fields[0]!.clean
+
+      const measField = numeric || fields[1] || fields[0]!
+      meas = columns.find((c) => c.toLowerCase() === measField.clean.toLowerCase()) || measField.clean
+
+      if (measField.clean.toUpperCase().includes('COUNT')) {
+        agg = 'COUNT'
+        meas = columns[0] || ''
+      } else if (measField.clean.toUpperCase().includes('AVG')) {
+        agg = 'AVG'
+      } else if (measField.clean.toUpperCase().includes('SUM')) {
+        agg = 'SUM'
+      }
+    }
+
+    pushSnapshot(captureDashboardSnapshot())
+
+    const newWidget: Widget = {
+      id: `widget_${Date.now()}`,
+      type,
+      title,
+      position: { x: 0, y: 0, w: 6, h: 4 },
+      dataSource: 'data_table_view',
+      query: {
+        dimensions: dim ? [dim] : [],
+        measures: [{ column: meas || columns[0] || '', aggregation: agg, alias: 'Value' }],
+        filters: [],
+        limit: 10,
+      },
+      config: {},
+    }
+
+    addWidget(newWidget)
+    canvasManager.syncStateToYjs([...widgets, newWidget])
+    alert(`Widget "${title}" added to canvas!`)
   }
 
   // Step 6: Handle Visual Canvas Widgets
@@ -894,6 +1268,110 @@ function App() {
 
   return (
     <div className={`app-container theme-${theme}`}>
+      {restoredNotification && (
+        <div className="autosave-notification">
+          <span>⚙️ {restoredNotification}</span>
+          <button className="btn-close" onClick={() => setRestoredNotification(null)}>×</button>
+        </div>
+      )}
+
+      {/* Collaboration Subbar */}
+      <div className="collab-subbar">
+        <div className="collab-status">
+          <span className={`status-pulse ${collabActive ? 'online' : 'offline'}`} />
+          <span className="status-label">
+            {collabActive ? `Live Session: ${roomName}` : 'Local-Only Mode'}
+          </span>
+          <span className="save-status-indicator">{saveStatus}</span>
+        </div>
+
+        <div className="collab-actions">
+          {collabActive && connectedPeers.length > 0 && (
+            <div className="peer-avatars">
+              {connectedPeers.map((peer, pidx) => (
+                <div 
+                  key={pidx} 
+                  className="peer-avatar" 
+                  style={{ backgroundColor: peer.color || '#4f46e5' }}
+                  title={peer.name || 'Anonymous Peer'}
+                >
+                  {(peer.name || '?').substring(0, 2).toUpperCase()}
+                </div>
+              ))}
+              <span className="peers-text">({connectedPeers.length} peer{connectedPeers.length > 1 ? 's' : ''} online)</span>
+            </div>
+          )}
+
+          <button 
+            className={`btn btn-tiny ${collabActive ? 'btn-danger' : 'btn-glow'}`}
+            onClick={() => setCollabActive(!collabActive)}
+            title={collabActive ? 'Stop collaborative sync' : 'Start collaborative live editing session'}
+          >
+            {collabActive ? '🔌 Go Offline' : '📡 Go Live / Collaborate'}
+          </button>
+          
+          <button 
+            className="btn btn-secondary btn-tiny"
+            onClick={() => setShowCollabSettings(!showCollabSettings)}
+            title="Configure nickname, room and color settings"
+          >
+            ⚙️ Collab Settings
+          </button>
+
+          {collabActive && (
+            <button 
+              className="btn btn-secondary btn-tiny btn-glow" 
+              onClick={() => {
+                const inviteUrl = `${window.location.origin}${window.location.pathname}?room=${encodeURIComponent(roomName)}`
+                navigator.clipboard.writeText(inviteUrl)
+                alert('Invite link copied to clipboard! Share it with others to join this room.')
+              }}
+            >
+              🔗 Copy Invite Link
+            </button>
+          )}
+        </div>
+
+        {showCollabSettings && (
+          <div className="collab-settings-dropdown card">
+            <h4>Live Session Settings</h4>
+            <div className="form-group">
+              <label htmlFor="collab-room-id">Collaboration Room Name</label>
+              <input 
+                id="collab-room-id"
+                type="text" 
+                className="form-control" 
+                value={roomName} 
+                onChange={(e) => setRoomName(e.target.value)} 
+                disabled={collabActive}
+                placeholder="e.g. daily_sync"
+              />
+            </div>
+            <div className="form-group">
+              <label htmlFor="collab-nickname">Your Nickname</label>
+              <input 
+                id="collab-nickname"
+                type="text" 
+                className="form-control" 
+                value={nickname} 
+                onChange={(e) => setNickname(e.target.value)} 
+                placeholder="e.g. Sarah"
+              />
+            </div>
+            <div className="form-group">
+              <label htmlFor="collab-color">Avatar Color</label>
+              <input 
+                id="collab-color"
+                type="color" 
+                value={userColor} 
+                onChange={(e) => setUserColor(e.target.value)} 
+              />
+            </div>
+            <p className="help-text">Disconnect live session to change the room name.</p>
+          </div>
+        )}
+      </div>
+
       <header className="hero-header">
         <div className="branding">
           <span className="cyber-badge">PHASE 1 POC</span>
@@ -1431,6 +1909,75 @@ function App() {
               Add visual widgets to customize cross-filtering links and exclusions.
             </div>
           )}
+
+          {/* Day 4: Auto-Save & Version Checkpoints UI */}
+          <h2 className="section-spacing">7. Version History &amp; Auto-Save</h2>
+          <div className="version-history-panel">
+            <div className="autosave-status-badge">
+              <span className="icon">💾</span>
+              <div>
+                <strong>Auto-Save Status</strong>
+                <p style={{ margin: 0, fontSize: '0.75rem', color: 'var(--text-muted)' }}>{saveStatus}</p>
+              </div>
+            </div>
+
+            <form onSubmit={handleSaveVersion} className="calc-field-form section-spacing">
+              <h4>Create Checkpoint</h4>
+              <div className="form-group">
+                <label htmlFor="version-name">Version Name</label>
+                <input
+                  id="version-name"
+                  type="text"
+                  className="form-control form-control-sm"
+                  placeholder="e.g., Before cleaning categories"
+                  value={versionNameInput}
+                  onChange={(e) => setVersionNameInput(e.target.value)}
+                  required
+                />
+              </div>
+              <div className="form-group">
+                <label htmlFor="version-desc">Description</label>
+                <input
+                  id="version-desc"
+                  type="text"
+                  className="form-control form-control-sm"
+                  placeholder="Optional details..."
+                  value={versionDescInput}
+                  onChange={(e) => setVersionDescInput(e.target.value)}
+                />
+              </div>
+              <button type="submit" className="btn btn-secondary btn-tiny" disabled={!versionNameInput.trim()}>
+                📸 Save Checkpoint
+              </button>
+            </form>
+
+            {savedVersions.length > 0 && (
+              <div className="version-list-container">
+                <h4>Saved Checkpoints</h4>
+                <div className="version-list">
+                  {savedVersions.map((v) => (
+                    <div key={v.id} className="version-item" onClick={() => handleRestoreVersion(v)} title="Click to restore this checkpoint">
+                      <div className="version-info">
+                        <div className="version-name">{v.name}</div>
+                        {v.description && <div className="version-desc">{v.description}</div>}
+                        <div className="version-meta">
+                          <span>{new Date(v.updatedAt).toLocaleString()}</span>
+                          <span>({v.data.widgets?.length || 0} widgets)</span>
+                        </div>
+                      </div>
+                      <button 
+                        className="btn-delete-version" 
+                        onClick={(e) => handleDeleteVersion(v.id, e)} 
+                        title="Delete checkpoint"
+                      >
+                        🗑
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
         </section>
 
         {/* Query Editor & Analytics Console */}
@@ -1530,6 +2077,107 @@ function App() {
           )}
         </section>
 
+        {/* Day 4: AI Copilot Section */}
+        <section className="card query-copilot-card">
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+            <h2>🤖 AI Query Copilot (Natural Language SQL)</h2>
+            <button className="btn btn-tiny btn-secondary" onClick={() => setShowCopilotSettings(!showCopilotSettings)}>
+              ⚙️ Copilot Settings
+            </button>
+          </div>
+
+          {showCopilotSettings && (
+            <div className="copilot-settings-box card" style={{ marginBottom: '16px', padding: '12px' }}>
+              <h4>Copilot Engine Settings</h4>
+              <div className="form-group" style={{ marginBottom: '12px' }}>
+                <label htmlFor="copilot-mode">Translation Mode</label>
+                <select 
+                  id="copilot-mode"
+                  className="form-control" 
+                  value={copilotMode} 
+                  onChange={(e: any) => setCopilotMode(e.target.value)}
+                >
+                  <option value="local">Local Compiler (No API Key Required)</option>
+                  <option value="gemini">Gemini API (Key Required)</option>
+                  <option value="openai">OpenAI API (Key Required)</option>
+                </select>
+              </div>
+
+              {copilotMode === 'gemini' && (
+                <div className="form-group">
+                  <label htmlFor="gemini-key">Gemini API Key</label>
+                  <input 
+                    id="gemini-key"
+                    type="password" 
+                    className="form-control" 
+                    placeholder="AIzaSy..." 
+                    value={geminiKey} 
+                    onChange={(e) => setGeminiKey(e.target.value)} 
+                  />
+                  <p className="help-text">Your key is stored locally in your browser.</p>
+                </div>
+              )}
+
+              {copilotMode === 'openai' && (
+                <div className="form-group">
+                  <label htmlFor="openai-key">OpenAI API Key</label>
+                  <input 
+                    id="openai-key"
+                    type="password" 
+                    className="form-control" 
+                    placeholder="sk-proj-..." 
+                    value={openAIKey} 
+                    onChange={(e) => setOpenAIKey(e.target.value)} 
+                  />
+                  <p className="help-text">Your key is stored locally in your browser.</p>
+                </div>
+              )}
+            </div>
+          )}
+
+          <div className="copilot-input-wrapper">
+            <textarea
+              className="copilot-input"
+              value={copilotPrompt}
+              onChange={(e) => setCopilotPrompt(e.target.value)}
+              disabled={!csvUploaded}
+              placeholder={csvUploaded ? "Ask a question (e.g. 'average Revenue by Category' or 'total Profit where year = 2025')" : "Ingest CSV data to enable AI Copilot"}
+            />
+            <button 
+              className="btn btn-primary btn-glow btn-copilot-submit"
+              onClick={handleCopilotGenerate}
+              disabled={copilotLoading || !csvUploaded || !copilotPrompt.trim()}
+            >
+              {copilotLoading ? 'Thinking...' : '✨ Generate SQL'}
+            </button>
+          </div>
+
+          {copilotError && (
+            <div className="error-alert" style={{ marginTop: '16px' }}>
+              <strong>Copilot Error:</strong> {copilotError}
+            </div>
+          )}
+
+          {copilotResult && (
+            <div className="copilot-result-box" style={{ marginTop: '16px' }}>
+              <div className="copilot-explanation">
+                💡 <strong>Heuristic Translation:</strong> {copilotExplanation}
+              </div>
+              <div className="copilot-sql-preview">
+                <pre><code>{copilotResult}</code></pre>
+              </div>
+              <div className="copilot-actions" style={{ display: 'flex', gap: '8px', marginTop: '12px' }}>
+                <button className="btn btn-secondary btn-tiny btn-glow" onClick={handleApplyCopilotSQL}>
+                  ▶ Run SQL in Console
+                </button>
+                <button className="btn btn-secondary btn-tiny btn-glow" onClick={handleCreateWidgetFromCopilot}>
+                  📊 Add Auto-Widget to Canvas
+                </button>
+              </div>
+            </div>
+          )}
+        </section>
+
         {/* Results Pane */}
         <section className="card results-panel">
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
@@ -1558,18 +2206,57 @@ function App() {
                 <thead>
                   <tr>
                     {Object.keys(queryResult[0]).map((key) => (
-                      <th key={key}>{columnLabels[key] || key}</th>
+                      <th 
+                        key={key} 
+                        onClick={() => handleSort(key)} 
+                        className="sortable-header"
+                        style={{ cursor: 'pointer', userSelect: 'none' }}
+                      >
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px' }}>
+                          <span>{columnLabels[key] || key}</span>
+                          <span style={{ fontSize: '0.7rem', opacity: sortColumn === key ? 1 : 0.3 }}>
+                            {sortColumn === key ? (sortDirection === 'asc' ? '▲' : '▼') : '↕'}
+                          </span>
+                        </div>
+                      </th>
+                    ))}
+                  </tr>
+                  <tr className="filter-row">
+                    {Object.keys(queryResult[0]).map((key) => (
+                      <th key={`filter-${key}`} style={{ padding: '4px 8px', background: 'rgba(0, 0, 0, 0.15)' }}>
+                        <input
+                          type="text"
+                          className="grid-filter-input"
+                          placeholder="Filter..."
+                          value={columnFilters[key] || ''}
+                          onChange={(e) => {
+                            setColumnFilters(prev => ({
+                              ...prev,
+                              [key]: e.target.value
+                            }))
+                          }}
+                          onClick={(e) => e.stopPropagation()} // Prevent sorting toggle
+                        />
+                      </th>
                     ))}
                   </tr>
                 </thead>
                 <tbody>
-                  {queryResult.map((row, idx) => (
-                    <tr key={idx}>
-                      {Object.keys(row).map((key, cellIdx) => (
-                        <td key={cellIdx}>{formatValue(row[key], columnFormats[key] || 'default')}</td>
-                      ))}
+                  {processedQueryResult && processedQueryResult.length > 0 ? (
+                    processedQueryResult.map((row, idx) => (
+                      <tr key={idx}>
+                        {Object.keys(row).map((key, cellIdx) => (
+                          <td key={cellIdx}>{formatValue(row[key], columnFormats[key] || 'default')}</td>
+                        ))}
+                      </tr>
+                    ))
+                  ) : (
+                    <tr>
+                      <td colSpan={Object.keys(queryResult[0]).length} style={{ textAlign: 'center', padding: '24px', color: 'var(--text-muted)' }}>
+                        No rows match active column filters
+                      </td>
                     </tr>
-                  ))}
+                  )}
                 </tbody>
               </table>
             </div>

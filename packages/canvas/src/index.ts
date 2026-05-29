@@ -1,10 +1,12 @@
 import * as Y from 'yjs'
 import { Widget } from '@helixbi/types'
+import { WebrtcProvider } from 'y-webrtc'
 
 export class CanvasManager {
   private doc: Y.Doc
   private ywidgets: Y.Array<any>
   private isApplyingUpdate = false
+  private provider: WebrtcProvider | null = null
 
   constructor() {
     this.doc = new Y.Doc()
@@ -14,6 +16,51 @@ export class CanvasManager {
 
   getDoc(): Y.Doc {
     return this.doc
+  }
+
+  connectWebRTC(roomName: string, nickname: string, color: string, onPeersChange?: (peers: any[]) => void): void {
+    if (typeof window === 'undefined') return
+    if (this.provider) {
+      this.provider.destroy()
+    }
+
+    try {
+      this.provider = new WebrtcProvider(roomName, this.doc, {
+        signaling: [
+          'wss://signaling.yjs.dev',
+          'wss://y-webrtc-signaling-us.herokuapp.com',
+          'wss://y-webrtc-signaling-de.herokuapp.com'
+        ]
+      })
+
+      // Set user info in Yjs awareness
+      this.provider.awareness.setLocalStateField('user', { name: nickname, color })
+
+      if (onPeersChange) {
+        const updatePeers = () => {
+          if (!this.provider) return
+          const states = Array.from(this.provider.awareness.getStates().values()) as any[]
+          const peers = states
+            .filter(state => state.user)
+            .map(state => state.user)
+          onPeersChange(peers)
+        }
+
+        this.provider.awareness.on('change', updatePeers)
+        updatePeers()
+      }
+      console.warn(`[HelixCanvas] Connected to WebRTC room: ${roomName} as ${nickname}`)
+    } catch (err) {
+      console.error('[HelixCanvas] WebRTC Connection failed:', err)
+    }
+  }
+
+  disconnectWebRTC(): void {
+    if (this.provider) {
+      this.provider.destroy()
+      this.provider = null
+      console.warn('[HelixCanvas] Disconnected WebRTC room')
+    }
   }
 
   /**

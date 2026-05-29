@@ -157,3 +157,54 @@ export interface SchemaMigrationEntry {
   migratedAt: string
   migratedBy: string
 }
+
+export interface ColumnProfile {
+  columnName: string
+  dataType: 'numeric' | 'string' | 'temporal' | 'boolean' | 'unknown'
+  totalRows: number
+  nullCount: number
+  distinctCount: number
+  // Numeric-only statistics
+  min?: number
+  max?: number
+  mean?: number
+  median?: number
+  stddev?: number
+  // String/categorical statistics
+  avgLength?: number
+  topValues?: { value: string; count: number }[]
+  // Temporal statistics
+  minDate?: string
+  maxDate?: string
+}
+
+export interface ProfileResult {
+  tableName: string
+  profiledAt: string
+  totalRows: number
+  totalColumns: number
+  columns: ColumnProfile[]
+}
+
+export interface QueryHistoryEntry {
+  id: string
+  sql: string
+  executedAt: string
+  executionTimeMs: number
+  rowCount: number
+  status: 'success' | 'error'
+  error?: string
+}
+
+export interface DashboardSnapshot {
+  title: string
+  description: string
+  calculatedFields: CalculatedField[]
+  widgets: Widget[]
+  columnFormats: Record<string, string>
+  columnLabels: Record<string, string>
+  globalFilters: GlobalFilter[]
+  crossFilterExclusions: string[]
+  timestamp: string
+}
+
