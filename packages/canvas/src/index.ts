@@ -54,6 +54,31 @@ export class CanvasManager {
       this.ywidgets.unobserve(observer)
     }
   }
+
+  /**
+   * Reorders widgets by moving an item from one index to another.
+   * Uses a delete-and-insert pattern within a Yjs transaction.
+   */
+  reorderWidgets(fromIndex: number, toIndex: number): Widget[] {
+    const currentWidgets = this.ywidgets.toArray() as Widget[]
+    if (
+      fromIndex < 0 ||
+      fromIndex >= currentWidgets.length ||
+      toIndex < 0 ||
+      toIndex >= currentWidgets.length ||
+      fromIndex === toIndex
+    ) {
+      return currentWidgets
+    }
+
+    const reordered = [...currentWidgets]
+    const [moved] = reordered.splice(fromIndex, 1)
+    reordered.splice(toIndex, 0, moved!)
+
+    this.syncStateToYjs(reordered)
+    return reordered
+  }
 }
 
 export const canvasManager = new CanvasManager()
+

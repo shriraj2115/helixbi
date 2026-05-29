@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 import { immer } from 'zustand/middleware/immer'
-import { CalculatedField, Widget, GlobalFilter } from '@helixbi/types'
+import { CalculatedField, Widget, GlobalFilter, DashboardSnapshot, QueryHistoryEntry } from '@helixbi/types'
 
 interface UIState {
   sidebarOpen: boolean
@@ -56,6 +56,8 @@ interface DashboardState {
   crossFilters: Record<string, { column: string; value: any }>
   setCrossFilter: (widgetId: string, filter: { column: string; value: any } | null) => void
   clearCrossFilters: () => void
+  crossFilterExclusions: string[]
+  toggleCrossFilterExclusion: (id: string) => void
   loadDashboard: (dashboardJson: any) => void
 }
 
@@ -69,6 +71,7 @@ export const useDashboardStore = create<DashboardState>()(
     columnLabels: {},
     globalFilters: [],
     crossFilters: {},
+    crossFilterExclusions: [],
     setDashboardTitle: (title) =>
       set((state) => {
         state.title = title
@@ -168,6 +171,127 @@ export const useDashboardStore = create<DashboardState>()(
         state.columnLabels = dashboardJson.columnLabels || {}
         state.globalFilters = dashboardJson.globalFilters || []
         state.crossFilters = {}
+        state.crossFilterExclusions = dashboardJson.crossFilterExclusions || []
+      }),
+    toggleCrossFilterExclusion: (id) =>
+      set((state) => {
+        if (state.crossFilterExclusions.includes(id)) {
+          state.crossFilterExclusions = state.crossFilterExclusions.filter((x) => x !== id)
+        } else {
+          state.crossFilterExclusions.push(id)
+        }
+      }),
+  })),
+)
+
+const MAX_UNDO_STACK = 50
+
+interface HistoryState {
+  undoStack: DashboardSnapshot[]
+  redoStack: DashboardSnapshot[]
+  queryHistory: QueryHistoryEntry[]
+  pushSnapshot: (snapshot: DashboardSnapshot) => void
+  undo: () => DashboardSnapshot | null
+  redo: () => DashboardSnapshot | null
+  canUndo: () => boolean
+  canRedo: () => boolean
+  addQueryHistoryEntry: (entry: QueryHistoryEntry) => void
+  clearQueryHistory: () => void
+}
+
+/**
+ * Captures the current dashboard state as a snapshot for undo/redo.
+ */
+export function captureDashboardSnapshot(): DashboardSnapshot {
+  const state = useDashboardStore.getState()
+  return {
+    title: state.title,
+    description: state.description,
+    calculatedFields: JSON.parse(JSON.stringify(state.calculatedFields)),
+    widgets: JSON.parse(JSON.stringify(state.widgets)),
+    columnFormats: { ...state.columnFormats },
+    columnLabels: { ...state.columnLabels },
+    globalFilters: JSON.parse(JSON.stringify(state.globalFilters)),
+    crossFilterExclusions: [...state.crossFilterExclusions],
+    timestamp: new Date().toISOString()
+  }
+}
+
+/**
+ * Restores a dashboard snapshot into the dashboard store.
+ */
+export function restoreDashboardSnapshot(snapshot: DashboardSnapshot): void {
+  const store = useDashboardStore.getState()
+  store.loadDashboard(snapshot)
+}
+
+export const useHistoryStore = create<HistoryState>()(
+  immer((set, get) => ({
+    undoStack: [],
+    redoStack: [],
+    queryHistory: [],
+
+    pushSnapshot: (snapshot) =>
+      set((state) => {
+        state.undoStack.push(snapshot)
+        if (state.undoStack.length > MAX_UNDO_STACK) {
+          state.undoStack.shift()
+        }
+        // Clear redo stack on new action
+        state.redoStack = []
+      }),
+
+    undo: () => {
+      const state = get()
+      if (state.undoStack.length === 0) return null
+
+      // Capture current state as redo target
+      const currentSnapshot = captureDashboardSnapshot()
+      const previousSnapshot = state.undoStack[state.undoStack.length - 1]!
+
+      set((s) => {
+        s.undoStack.pop()
+        s.redoStack.push(currentSnapshot as any)
+      })
+
+      // Restore the previous snapshot
+      restoreDashboardSnapshot(previousSnapshot)
+      return previousSnapshot
+    },
+
+    redo: () => {
+      const state = get()
+      if (state.redoStack.length === 0) return null
+
+      // Capture current state as undo target
+      const currentSnapshot = captureDashboardSnapshot()
+      const nextSnapshot = state.redoStack[state.redoStack.length - 1]!
+
+      set((s) => {
+        s.redoStack.pop()
+        s.undoStack.push(currentSnapshot as any)
+      })
+
+      // Restore the redo snapshot
+      restoreDashboardSnapshot(nextSnapshot)
+      return nextSnapshot
+    },
+
+    canUndo: () => get().undoStack.length > 0,
+    canRedo: () => get().redoStack.length > 0,
+
+    addQueryHistoryEntry: (entry) =>
+      set((state) => {
+        state.queryHistory.unshift(entry)
+        // Keep last 100 entries
+        if (state.queryHistory.length > 100) {
+          state.queryHistory = state.queryHistory.slice(0, 100)
+        }
+      }),
+
+    clearQueryHistory: () =>
+      set((state) => {
+        state.queryHistory = []
       }),
   })),
 )

@@ -1,11 +1,11 @@
-import { useState, useRef, useEffect } from 'react'
+import { useState, useRef, useEffect, useCallback } from 'react'
 import * as duckdb from '@duckdb/duckdb-wasm'
-import { useDashboardStore } from '@helixbi/state'
-import { compileFormula, generateViewSQL, parseAndCompileFormula, compileVisualQueryToSQL } from '@helixbi/engine'
+import { useUIStore, useDashboardStore, useHistoryStore, captureDashboardSnapshot } from '@helixbi/state'
+import { compileFormula, generateViewSQL, parseAndCompileFormula, compileVisualQueryToSQL, classifyColumnType, generateProfileSQL, generateTopValuesSQL } from '@helixbi/engine'
 import { canvasManager } from '@helixbi/canvas'
 import { visualRegistry } from '@helixbi/visuals'
 import { formatValue } from '@helixbi/semantic'
-import { CalculatedField, Widget, VisualQuery } from '@helixbi/types'
+import { CalculatedField, Widget, VisualQuery, ColumnProfile, QueryHistoryEntry } from '@helixbi/types'
 import './App.css'
 
 const MANUAL_BUNDLES: duckdb.DuckDBBundles = {
@@ -29,6 +29,7 @@ function App() {
   const [queryError, setQueryError] = useState<string | null>(null)
   const [execTimeMs, setExecTimeMs] = useState<number | null>(null)
   const [columns, setColumns] = useState<string[]>([])
+  const [columnTypes, setColumnTypes] = useState<Record<string, string>>({})
   
   // Calculated Fields form state
   const [cfName, setCfName] = useState('')
@@ -36,6 +37,10 @@ function App() {
   const [cfOutputType, setCfOutputType] = useState('DOUBLE')
   const [cfError, setCfError] = useState<string | null>(null)
   const [cfPreviewSQL, setCfPreviewSQL] = useState<string | null>(null)
+
+  // Autocomplete helper state
+  const [showAutoComplete, setShowAutoComplete] = useState(false)
+  const [autoCompleteFiltered, setAutoCompleteFiltered] = useState<string[]>([])
 
   // Widget Composer form state
   const [widgetTitle, setWidgetTitle] = useState('')
@@ -55,6 +60,24 @@ function App() {
   const [selectedFilterCol, setSelectedFilterCol] = useState('')
   const [selectedFilterVal, setSelectedFilterVal] = useState('')
   const [filterColOptions, setFilterColOptions] = useState<string[]>([])
+
+  // Day 3: Data Profiler state
+  const [profileResults, setProfileResults] = useState<ColumnProfile[]>([])
+  const [profiling, setProfiling] = useState(false)
+  const [profileProgress, setProfileProgress] = useState(0)
+  const [profileTotal, setProfileTotal] = useState(0)
+
+  // Day 3: Query History panel state
+  const [showQueryHistory, setShowQueryHistory] = useState(false)
+
+  // Day 3: Drag-and-drop state
+  const [dragIndex, setDragIndex] = useState<number | null>(null)
+  const [dragOverIndex, setDragOverIndex] = useState<number | null>(null)
+
+  // Day 3: Drill-down modal state
+  const [drillDown, setDrillDown] = useState<{ column: string; value: string; widget: Widget } | null>(null)
+  const [drillDownData, setDrillDownData] = useState<any[] | null>(null)
+  const [drillDownLoading, setDrillDownLoading] = useState(false)
 
   const loadFilterOptions = async (col: string) => {
     if (!db || !col) return
@@ -78,6 +101,9 @@ function App() {
     setSelectedFilterVal('')
   }, [selectedFilterCol])
 
+  // UI Store
+  const { theme, toggleTheme } = useUIStore()
+
   // Zustand Store
   const { 
     calculatedFields, addCalculatedField, removeCalculatedField,
@@ -85,8 +111,15 @@ function App() {
     columnFormats, columnLabels, setColumnFormat, setColumnLabel, loadDashboard,
     globalFilters, addGlobalFilter, removeGlobalFilter, clearGlobalFilters,
     crossFilters, clearCrossFilters,
+    crossFilterExclusions, toggleCrossFilterExclusion,
     title, description, setDashboardTitle, setDashboardDescription
   } = useDashboardStore()
+
+  // Day 3: History Store
+  const { 
+    pushSnapshot, undo, redo, canUndo, canRedo,
+    queryHistory, addQueryHistoryEntry, clearQueryHistory
+  } = useHistoryStore()
   
   const fileInputRef = useRef<HTMLInputElement>(null)
   const fileConfigInputRef = useRef<HTMLInputElement>(null)
@@ -98,6 +131,37 @@ function App() {
     })
     return () => unsubscribe()
   }, [setWidgets])
+
+  // Sync theme class to document body
+  useEffect(() => {
+    document.body.className = `theme-${theme}`
+  }, [theme])
+
+  // Day 3: Keyboard shortcuts for undo/redo
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key === 'z' && !e.shiftKey) {
+        e.preventDefault()
+        if (canUndo()) {
+          const snapshot = undo()
+          if (snapshot) {
+            canvasManager.syncStateToYjs(snapshot.widgets)
+          }
+        }
+      }
+      if ((e.ctrlKey || e.metaKey) && e.key === 'z' && e.shiftKey) {
+        e.preventDefault()
+        if (canRedo()) {
+          const snapshot = redo()
+          if (snapshot) {
+            canvasManager.syncStateToYjs(snapshot.widgets)
+          }
+        }
+      }
+    }
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [undo, redo, canUndo, canRedo])
 
   // Step 1: Initialize DuckDB WASM
   const initDuckDB = async () => {
@@ -154,9 +218,15 @@ function App() {
       
       // Query table schema
       const columnsRes = await conn.query(`DESCRIBE ${targetTable}`)
-      const cols = columnsRes.toArray().map((row: any) => row.column_name)
+      const colRows = columnsRes.toArray()
+      const cols = colRows.map((row: any) => row.column_name)
+      const colTypesMap: Record<string, string> = {}
+      colRows.forEach((row: any) => {
+        colTypesMap[row.column_name] = row.column_type
+      })
       
       setColumns(cols)
+      setColumnTypes(colTypesMap)
       setCsvUploaded(true)
 
       // Set default dimensions/measures inside form if columns exist
@@ -192,7 +262,8 @@ function App() {
       const result = await conn.query(queryText)
       
       const end = performance.now()
-      setExecTimeMs(Math.round((end - start) * 100) / 100)
+      const elapsed = Math.round((end - start) * 100) / 100
+      setExecTimeMs(elapsed)
       
       // Convert Arrow Table to JS Objects
       const rows = result.toArray().map((row: any) => {
@@ -206,10 +277,31 @@ function App() {
       
       setQueryResult(rows)
       await conn.close()
+
+      // Day 3: Track in query history
+      addQueryHistoryEntry({
+        id: `qh_${Date.now()}`,
+        sql: queryText,
+        executedAt: new Date().toISOString(),
+        executionTimeMs: elapsed,
+        rowCount: rows.length,
+        status: 'success'
+      })
     } catch (err: any) {
       console.error(err)
       setQueryError(err.message || String(err))
       setQueryResult(null)
+
+      // Day 3: Track error queries too
+      addQueryHistoryEntry({
+        id: `qh_${Date.now()}`,
+        sql: queryText,
+        executedAt: new Date().toISOString(),
+        executionTimeMs: 0,
+        rowCount: 0,
+        status: 'error',
+        error: err.message || String(err)
+      })
     } finally {
       setLoading(false)
     }
@@ -243,6 +335,7 @@ function App() {
     if (!expr.trim()) {
       setCfError(null)
       setCfPreviewSQL(null)
+      setShowAutoComplete(false)
       return
     }
 
@@ -254,6 +347,35 @@ function App() {
       setCfPreviewSQL(null)
       setCfError(err.message || 'Expression syntax error')
     }
+
+    const match = expr.match(/\[([a-zA-Z0-9_]*)$/)
+    if (match) {
+      const q = match[1]?.toLowerCase() || ''
+      const filtered = columns.filter(col => col.toLowerCase().includes(q))
+      setAutoCompleteFiltered(filtered)
+      setShowAutoComplete(true)
+    } else {
+      setShowAutoComplete(false)
+    }
+  }
+
+  const insertAutoCompleteColumn = (colName: string) => {
+    const updated = cfExpression.replace(/\[[a-zA-Z0-9_]*$/, `[${colName}]`)
+    setCfExpression(updated)
+    setShowAutoComplete(false)
+
+    try {
+      const sql = compileFormula(updated)
+      setCfPreviewSQL(sql)
+      setCfError(null)
+    } catch (err: any) {
+      setCfPreviewSQL(null)
+      setCfError(err.message || 'Expression syntax error')
+    }
+
+    setTimeout(() => {
+      document.getElementById('cf-expr')?.focus()
+    }, 10)
   }
 
   const handleAddCalculatedField = async (e: React.FormEvent) => {
@@ -280,6 +402,9 @@ function App() {
     }
 
     try {
+      // Day 3: Push undo snapshot before mutation
+      pushSnapshot(captureDashboardSnapshot())
+
       const { sqlExpression, dependsOn } = parseAndCompileFormula(rawExpression)
 
       const newField: CalculatedField = {
@@ -311,6 +436,7 @@ function App() {
   }
 
   const handleDeleteCalculatedField = async (id: string) => {
+    pushSnapshot(captureDashboardSnapshot())
     const updatedFields = calculatedFields.filter(f => f.id !== id)
     removeCalculatedField(id)
     await rebuildDuckDBView(updatedFields)
@@ -319,10 +445,12 @@ function App() {
   // Step 6: Handle Visual Canvas Widgets
   const handleAddWidget = (e: React.FormEvent) => {
     e.preventDefault()
-    if (!widgetTitle.trim() || !widgetDim || !widgetMeas) return
+    if (!widgetTitle.trim() || !widgetMeas || (widgetType !== 'builtin.kpi_card' && widgetType !== 'builtin.sparkline' && !widgetDim)) return
+
+    pushSnapshot(captureDashboardSnapshot())
 
     const query: VisualQuery = {
-      dimensions: [widgetDim],
+      dimensions: (widgetType === 'builtin.kpi_card' || widgetType === 'builtin.sparkline') ? [] : [widgetDim],
       measures: [
         {
           column: widgetMeas,
@@ -336,6 +464,11 @@ function App() {
         enabled: true,
         maxDistinct: 30
       }
+    }
+
+    // Sparklines need a dimension for trend
+    if (widgetType === 'builtin.sparkline' && widgetDim) {
+      query.dimensions = [widgetDim]
     }
 
     const newWidget: Widget = {
@@ -357,6 +490,7 @@ function App() {
   }
 
   const handleDeleteWidget = (id: string) => {
+    pushSnapshot(captureDashboardSnapshot())
     const updatedWidgets = widgets.filter(w => w.id !== id)
     removeWidget(id)
     canvasManager.syncStateToYjs(updatedWidgets)
@@ -438,6 +572,7 @@ function App() {
           return
         }
 
+        pushSnapshot(captureDashboardSnapshot())
         loadDashboard(parsed)
         canvasManager.syncStateToYjs(parsed.widgets || [])
 
@@ -451,6 +586,84 @@ function App() {
       }
     }
     reader.readAsText(file)
+  }
+
+  const handleExportCanvasImage = () => {
+    const canvasEl = document.querySelector('.dashboard-canvas') as HTMLElement
+    if (!canvasEl) {
+      alert('Dashboard canvas not found!')
+      return
+    }
+
+    const width = canvasEl.offsetWidth
+    const height = canvasEl.offsetHeight
+
+    let stylesHtml = ''
+    for (const sheet of Array.from(document.styleSheets)) {
+      try {
+        const rules = Array.from(sheet.cssRules)
+        stylesHtml += rules.map(rule => rule.cssText).join('\n')
+      } catch (e) {
+        console.warn('Could not read css rules from stylesheet:', e)
+      }
+    }
+
+    const customStyles = `
+      body { background: transparent; margin: 0; padding: 0; }
+      .btn-delete { display: none !important; }
+      .dashboard-canvas {
+        background-color: var(--bg-color, #08090f);
+        padding: 20px;
+        border-radius: 16px;
+      }
+    `
+
+    const svgString = `
+      <svg xmlns="http://www.w3.org/2000/svg" width="${width + 40}" height="${height + 40}">
+        <foreignObject width="100%" height="100%">
+          <div xmlns="http://www.w3.org/1999/xhtml">
+            <style>
+              ${stylesHtml}
+              ${customStyles}
+            </style>
+            <div style="padding: 20px; background-color: var(--bg-color, #08090f); min-height: 100%;">
+              <h1 style="margin-top: 0; margin-bottom: 4px; font-size: 1.6rem; font-weight: 700; color: var(--text-color); font-family: 'Inter', sans-serif;">${title}</h1>
+              <p style="margin-top: 0; margin-bottom: 24px; font-size: 0.9rem; color: var(--text-muted); font-family: 'Inter', sans-serif;">${description}</p>
+              <div class="dashboard-canvas">
+                ${canvasEl.innerHTML}
+              </div>
+            </div>
+          </div>
+        </foreignObject>
+      </svg>
+    `
+
+    const blob = new Blob([svgString], { type: 'image/svg+xml;charset=utf-8' })
+    const url = URL.createObjectURL(blob)
+    const img = new Image()
+    
+    img.onload = () => {
+      const canvas = document.createElement('canvas')
+      canvas.width = (width + 40) * 2
+      canvas.height = (height + 120) * 2
+      const ctx = canvas.getContext('2d')
+      if (ctx) {
+        ctx.scale(2, 2)
+        ctx.fillStyle = theme === 'light' ? '#f8fafc' : '#08090f'
+        ctx.fillRect(0, 0, width + 40, height + 120)
+        ctx.drawImage(img, 0, 0)
+        
+        const pngUrl = canvas.toDataURL('image/png')
+        const downloadAnchor = document.createElement('a')
+        downloadAnchor.setAttribute("href", pngUrl)
+        downloadAnchor.setAttribute("download", `${title.toLowerCase().replace(/\s+/g, '-')}-${Date.now()}.png`)
+        document.body.appendChild(downloadAnchor)
+        downloadAnchor.click()
+        downloadAnchor.remove()
+      }
+      URL.revokeObjectURL(url)
+    }
+    img.src = url
   }
 
   const exportQueryResult = async (format: 'csv' | 'parquet') => {
@@ -494,6 +707,7 @@ function App() {
   }
   const saveTitle = () => {
     if (tempTitle.trim()) {
+      pushSnapshot(captureDashboardSnapshot())
       setDashboardTitle(tempTitle.trim())
     }
     setEditingTitle(false)
@@ -503,8 +717,173 @@ function App() {
     setEditingDesc(true)
   }
   const saveDesc = () => {
+    pushSnapshot(captureDashboardSnapshot())
     setDashboardDescription(tempDesc.trim())
     setEditingDesc(false)
+  }
+
+  // Day 3: Data Profiler
+  const runDataProfiler = useCallback(async () => {
+    if (!db || !csvUploaded) return
+    try {
+      setProfiling(true)
+      setProfileResults([])
+      setProfileProgress(0)
+      setProfileTotal(columns.length)
+
+      const results: ColumnProfile[] = []
+      const conn = await db.connect()
+
+      for (let i = 0; i < columns.length; i++) {
+        const col = columns[i]!
+        const rawType = columnTypes[col] || 'VARCHAR'
+        const dataType = classifyColumnType(rawType)
+        const profileSQL = generateProfileSQL('data_table', col, dataType)
+
+        try {
+          const res = await conn.query(profileSQL)
+          const row = res.toArray()[0] as any
+
+          const profile: ColumnProfile = {
+            columnName: col,
+            dataType,
+            totalRows: Number(row.total_rows) || 0,
+            nullCount: Number(row.null_count) || 0,
+            distinctCount: Number(row.distinct_count) || 0,
+          }
+
+          if (dataType === 'numeric') {
+            profile.min = row.min_val !== null ? Number(row.min_val) : undefined
+            profile.max = row.max_val !== null ? Number(row.max_val) : undefined
+            profile.mean = row.mean_val !== null ? Number(row.mean_val) : undefined
+            profile.median = row.median_val !== null ? Number(row.median_val) : undefined
+            profile.stddev = row.stddev_val !== null ? Number(row.stddev_val) : undefined
+          }
+
+          if (dataType === 'string') {
+            profile.avgLength = row.avg_length !== null ? Number(row.avg_length) : undefined
+          }
+
+          if (dataType === 'temporal') {
+            profile.minDate = row.min_date ?? undefined
+            profile.maxDate = row.max_date ?? undefined
+          }
+
+          // Fetch top values for string/categorical columns
+          if (dataType === 'string' || dataType === 'unknown') {
+            try {
+              const topSQL = generateTopValuesSQL('data_table', col, 5)
+              const topRes = await conn.query(topSQL)
+              profile.topValues = topRes.toArray().map((tr: any) => ({
+                value: String(tr.value),
+                count: Number(tr.count)
+              }))
+            } catch {
+              // Non-critical failure
+            }
+          }
+
+          results.push(profile)
+        } catch (err) {
+          // If individual column profile fails, add a stub
+          results.push({
+            columnName: col,
+            dataType,
+            totalRows: 0,
+            nullCount: 0,
+            distinctCount: 0,
+          })
+        }
+
+        setProfileProgress(i + 1)
+      }
+
+      await conn.close()
+      setProfileResults(results)
+    } catch (err: any) {
+      console.error('Profiling failed:', err)
+      alert(`Data profiling error: ${err.message}`)
+    } finally {
+      setProfiling(false)
+    }
+  }, [db, csvUploaded, columns, columnTypes])
+
+  // Day 3: Drill-down handler
+  const openDrillDown = useCallback(async (column: string, value: string, widget: Widget) => {
+    if (!db) return
+    setDrillDown({ column, value, widget })
+    setDrillDownLoading(true)
+    setDrillDownData(null)
+
+    try {
+      const conn = await db.connect()
+      const sql = `SELECT * FROM data_table_view WHERE "${column}" = '${value.replace(/'/g, "''")}' LIMIT 50`
+      const res = await conn.query(sql)
+      await conn.close()
+
+      const rows = res.toArray().map((row: any) => {
+        const obj: Record<string, any> = {}
+        for (const key of Object.keys(row)) {
+          const val = row[key]
+          obj[key] = typeof val === 'bigint' ? val.toString() : val
+        }
+        return obj
+      })
+      setDrillDownData(rows)
+    } catch (err: any) {
+      console.error('Drill-down failed:', err)
+      setDrillDownData([])
+    } finally {
+      setDrillDownLoading(false)
+    }
+  }, [db])
+
+  // Day 3: Drag-and-drop handlers
+  const handleDragStart = (idx: number) => {
+    setDragIndex(idx)
+  }
+
+  const handleDragOver = (e: React.DragEvent, idx: number) => {
+    e.preventDefault()
+    setDragOverIndex(idx)
+  }
+
+  const handleDragLeave = () => {
+    setDragOverIndex(null)
+  }
+
+  const handleDrop = (toIndex: number) => {
+    if (dragIndex !== null && dragIndex !== toIndex) {
+      pushSnapshot(captureDashboardSnapshot())
+      const reordered = canvasManager.reorderWidgets(dragIndex, toIndex)
+      setWidgets(reordered)
+    }
+    setDragIndex(null)
+    setDragOverIndex(null)
+  }
+
+  const handleDragEnd = () => {
+    setDragIndex(null)
+    setDragOverIndex(null)
+  }
+
+  // Day 3: Undo/Redo button handlers
+  const handleUndo = () => {
+    if (canUndo()) {
+      const snapshot = undo()
+      if (snapshot) {
+        canvasManager.syncStateToYjs(snapshot.widgets)
+      }
+    }
+  }
+
+  const handleRedo = () => {
+    if (canRedo()) {
+      const snapshot = redo()
+      if (snapshot) {
+        canvasManager.syncStateToYjs(snapshot.widgets)
+      }
+    }
   }
 
   // Ingested columns + calculated columns
@@ -514,7 +893,7 @@ function App() {
   ]
 
   return (
-    <div className="app-container">
+    <div className={`app-container theme-${theme}`}>
       <header className="hero-header">
         <div className="branding">
           <span className="cyber-badge">PHASE 1 POC</span>
@@ -553,11 +932,26 @@ function App() {
           )}
         </div>
         <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
+          {/* Day 3: Undo/Redo Toolbar */}
+          <div className="undo-redo-toolbar">
+            <button className="btn-undo-redo" onClick={handleUndo} disabled={!canUndo()} title="Undo (Ctrl+Z)">
+              ↩ <span className="shortcut-hint">Ctrl+Z</span>
+            </button>
+            <button className="btn-undo-redo" onClick={handleRedo} disabled={!canRedo()} title="Redo (Ctrl+Shift+Z)">
+              ↪ <span className="shortcut-hint">Ctrl+⇧Z</span>
+            </button>
+          </div>
+          <button className="btn btn-secondary" onClick={toggleTheme} title="Toggle Dark/Light Theme">
+            {theme === 'light' ? '🌙 Dark Mode' : '☀️ Light Mode'}
+          </button>
           <button className="btn btn-secondary" onClick={handleExportDashboard} title="Export Dashboard JSON config">
             📤 Export Config
           </button>
           <button className="btn btn-secondary" onClick={() => fileConfigInputRef.current?.click()} title="Import Dashboard JSON config">
             📥 Import Config
+          </button>
+          <button className="btn btn-secondary" onClick={handleExportCanvasImage} title="Export Dashboard Canvas as PNG Image" disabled={!csvUploaded || widgets.length === 0}>
+            🖼️ Export Image
           </button>
           <input
             type="file"
@@ -635,6 +1029,7 @@ function App() {
               className="btn btn-tiny"
               disabled={!selectedFilterCol || !selectedFilterVal}
               onClick={() => {
+                pushSnapshot(captureDashboardSnapshot())
                 addGlobalFilter({
                   id: 'gf_' + Date.now(),
                   type: 'select',
@@ -725,7 +1120,7 @@ function App() {
           {/* Columns Explorer */}
           {csvUploaded && (
             <div className="columns-explorer section-spacing">
-              <h3>Ingested & Calculated Columns:</h3>
+              <h3>Ingested &amp; Calculated Columns:</h3>
               <div className="tags-container">
                 {columns.map((col) => (
                   <span key={col} className="tag-column">{col}</span>
@@ -757,7 +1152,7 @@ function App() {
                   />
                 </div>
                 
-                <div className="form-group">
+                <div className="form-group" style={{ position: 'relative' }}>
                   <label htmlFor="cf-expr">Formula Expression</label>
                   <input
                     id="cf-expr"
@@ -767,7 +1162,21 @@ function App() {
                     value={cfExpression}
                     onChange={(e) => handleFormulaChange(e.target.value)}
                     required
+                    autoComplete="off"
                   />
+                  {showAutoComplete && autoCompleteFiltered.length > 0 && (
+                    <div className="autocomplete-suggestions">
+                      {autoCompleteFiltered.map(col => (
+                        <div
+                          key={col}
+                          className="autocomplete-item"
+                          onClick={() => insertAutoCompleteColumn(col)}
+                        >
+                          📋 {col}
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
 
                 <div className="form-group">
@@ -855,37 +1264,59 @@ function App() {
                 >
                   <option value="builtin.bar_chart">Bar Chart</option>
                   <option value="builtin.line_chart">Line Chart</option>
+                  <option value="builtin.kpi_card">KPI Card</option>
+                  <option value="builtin.donut_chart">Donut Chart</option>
+                  <option value="builtin.scatter_plot">Scatter Plot</option>
+                  <option value="builtin.sparkline">Sparkline</option>
                 </select>
               </div>
 
               <div className="composer-row">
-                <div className="form-group">
-                  <label htmlFor="w-dim">Dimension (X-Axis)</label>
-                  <select
-                    id="w-dim"
-                    className="form-control"
-                    value={widgetDim}
-                    onChange={(e) => setWidgetDim(e.target.value)}
-                  >
-                    {allColumns.map(col => (
-                      <option key={col} value={col}>{col}</option>
-                    ))}
-                  </select>
-                </div>
+                {widgetType !== 'builtin.kpi_card' ? (
+                  <>
+                    <div className="form-group">
+                      <label htmlFor="w-dim">Dimension (X-Axis)</label>
+                      <select
+                        id="w-dim"
+                        className="form-control"
+                        value={widgetDim}
+                        onChange={(e) => setWidgetDim(e.target.value)}
+                      >
+                        {allColumns.map(col => (
+                          <option key={col} value={col}>{col}</option>
+                        ))}
+                      </select>
+                    </div>
 
-                <div className="form-group">
-                  <label htmlFor="w-meas">Measure</label>
-                  <select
-                    id="w-meas"
-                    className="form-control"
-                    value={widgetMeas}
-                    onChange={(e) => setWidgetMeas(e.target.value)}
-                  >
-                    {allColumns.map(col => (
-                      <option key={col} value={col}>{col}</option>
-                    ))}
-                  </select>
-                </div>
+                    <div className="form-group">
+                      <label htmlFor="w-meas">Measure</label>
+                      <select
+                        id="w-meas"
+                        className="form-control"
+                        value={widgetMeas}
+                        onChange={(e) => setWidgetMeas(e.target.value)}
+                      >
+                        {allColumns.map(col => (
+                          <option key={col} value={col}>{col}</option>
+                        ))}
+                      </select>
+                    </div>
+                  </>
+                ) : (
+                  <div className="form-group" style={{ gridColumn: 'span 2' }}>
+                    <label htmlFor="w-meas">Measure</label>
+                    <select
+                      id="w-meas"
+                      className="form-control"
+                      value={widgetMeas}
+                      onChange={(e) => setWidgetMeas(e.target.value)}
+                    >
+                      {allColumns.map(col => (
+                        <option key={col} value={col}>{col}</option>
+                      ))}
+                    </select>
+                  </div>
+                )}
               </div>
 
               <div className="form-group">
@@ -920,7 +1351,7 @@ function App() {
                 </select>
               </div>
 
-              <button type="submit" className="btn btn-secondary btn-tiny" disabled={!widgetTitle || !widgetDim || !widgetMeas}>
+              <button type="submit" className="btn btn-secondary btn-tiny" disabled={!widgetTitle || !widgetMeas || (widgetType !== 'builtin.kpi_card' && widgetType !== 'builtin.sparkline' && !widgetDim)}>
                 Add Chart Widget
               </button>
             </form>
@@ -935,7 +1366,7 @@ function App() {
           {csvUploaded ? (
             <div className="semantic-explorer">
               <div className="calc-tip" style={{ marginBottom: '12px' }}>
-                Define human-readable labels and cell formats for query results & visual charts.
+                Define human-readable labels and cell formats for query results &amp; visual charts.
               </div>
               <div className="semantic-list">
                 {allColumns.map((col) => (
@@ -968,14 +1399,43 @@ function App() {
             </div>
           ) : (
             <div className="calc-tip">
-              Ingest a CSV data source first to configure semantic labeling & formatting.
+              Ingest a CSV data source first to configure semantic labeling &amp; formatting.
+            </div>
+          )}
+
+          {/* Cross-Filtering Exclusions Panel */}
+          <h2 className="section-spacing">6. Cross-Filtering Exclusions</h2>
+          {csvUploaded && widgets.length > 0 ? (
+            <div className="semantic-explorer">
+              <div className="calc-tip" style={{ marginBottom: '12px' }}>
+                Select widgets to exclude them from sending or receiving cross-filtering interactions.
+              </div>
+              <div className="semantic-list">
+                {widgets.map((w) => (
+                  <div key={w.id} className="semantic-item" style={{ display: 'flex', flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', padding: '6px 10px', gap: '8px' }}>
+                    <span className="semantic-col-name" style={{ fontSize: '0.8rem', flex: 1, textOverflow: 'ellipsis', overflow: 'hidden' }}>{w.title}</span>
+                    <label style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', cursor: 'pointer', fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+                      <input
+                        type="checkbox"
+                        checked={crossFilterExclusions.includes(w.id)}
+                        onChange={() => toggleCrossFilterExclusion(w.id)}
+                      />
+                      Exclude
+                    </label>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : (
+            <div className="calc-tip">
+              Add visual widgets to customize cross-filtering links and exclusions.
             </div>
           )}
         </section>
 
         {/* Query Editor & Analytics Console */}
         <section className="card query-console">
-          <h2>6. Analytical Query Console</h2>
+          <h2>7. Analytical Query Console</h2>
           <div className="query-editor-wrapper">
             <textarea
               className="query-input"
@@ -1026,12 +1486,54 @@ function App() {
               ⚡ Executed in <strong>{execTimeMs}ms</strong>
             </div>
           )}
+
+          {/* Day 3: Query History */}
+          {queryHistory.length > 0 && (
+            <div className="query-history-section">
+              <button className="query-history-toggle" onClick={() => setShowQueryHistory(!showQueryHistory)}>
+                {showQueryHistory ? '▾' : '▸'} Query History ({queryHistory.length})
+                {queryHistory.length > 0 && (
+                  <span style={{ marginLeft: 'auto', fontSize: '0.7rem' }} onClick={(e) => { e.stopPropagation(); clearQueryHistory(); }}>
+                    Clear
+                  </span>
+                )}
+              </button>
+              {showQueryHistory && (
+                <div className="query-history-list">
+                  {queryHistory.map((qh) => (
+                    <div
+                      key={qh.id}
+                      className={`query-history-item ${qh.status === 'error' ? 'error' : ''}`}
+                      onClick={() => {
+                        setSqlQuery(qh.sql)
+                        runQuery(qh.sql)
+                      }}
+                      title="Click to re-run this query"
+                    >
+                      <div className="query-history-sql">{qh.sql}</div>
+                      <div className="query-history-meta">
+                        <span>{new Date(qh.executedAt).toLocaleTimeString()}</span>
+                        {qh.status === 'success' ? (
+                          <>
+                            <span className="time-badge">⚡ {qh.executionTimeMs}ms</span>
+                            <span>{qh.rowCount} rows</span>
+                          </>
+                        ) : (
+                          <span className="error-badge">✗ Error</span>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
         </section>
 
         {/* Results Pane */}
         <section className="card results-panel">
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
-            <h2>7. Output Datagrid</h2>
+            <h2>8. Output Datagrid</h2>
             {queryResult && queryResult.length > 0 && (
               <div style={{ display: 'flex', gap: '8px' }}>
                 <button className="btn btn-tiny" onClick={() => exportQueryResult('csv')} title="Export current query result to CSV">
@@ -1080,24 +1582,209 @@ function App() {
           )}
         </section>
 
-        {/* Dashboard Visual Canvas (Task 16) */}
+        {/* Dashboard Visual Canvas */}
         {csvUploaded && widgets.length > 0 && (
           <section className="dashboard-canvas-section">
-            <h2>8. Dashboard Visual Canvas (Collaborative Yjs Sync Active)</h2>
+            <h2>9. Dashboard Visual Canvas (Collaborative Yjs Sync Active — Drag to Reorder)</h2>
             <div className="dashboard-canvas">
-              {widgets.map((widget) => (
+              {widgets.map((widget, idx) => (
                 <WidgetRenderer 
                   key={widget.id} 
                   widget={widget} 
                   db={db}
                   rebuildTrigger={calculatedFields.length + calculatedFields.map(f => f.expression + f.name).join('')}
                   onDelete={handleDeleteWidget}
+                  onDrillDown={openDrillDown}
+                  index={idx}
+                  isDragging={dragIndex === idx}
+                  isDragOver={dragOverIndex === idx}
+                  onDragStart={handleDragStart}
+                  onDragOver={handleDragOver}
+                  onDragLeave={handleDragLeave}
+                  onDrop={handleDrop}
+                  onDragEnd={handleDragEnd}
                 />
               ))}
             </div>
           </section>
         )}
+
+        {/* Day 3: Data Profiler Section */}
+        {csvUploaded && (
+          <section className="card profiler-section">
+            <div className="profiler-header">
+              <h2>10. Data Profiler</h2>
+              <button
+                className="btn btn-tiny"
+                onClick={runDataProfiler}
+                disabled={profiling}
+              >
+                {profiling ? '⏳ Profiling...' : '🔬 Profile Columns'}
+              </button>
+            </div>
+
+            {profiling && (
+              <div className="profiler-progress">
+                <div className="profiler-progress-bar">
+                  <div className="profiler-progress-fill" style={{ width: `${profileTotal > 0 ? (profileProgress / profileTotal) * 100 : 0}%` }} />
+                </div>
+                <span className="profiler-progress-text">{profileProgress}/{profileTotal} columns</span>
+              </div>
+            )}
+
+            {profileResults.length > 0 && (
+              <div className="profiler-grid">
+                {profileResults.map((profile) => (
+                  <div key={profile.columnName} className="profile-card">
+                    <div className="profile-card-header">
+                      <span className="profile-col-name">{profile.columnName}</span>
+                      <span className={`profile-col-type ${profile.dataType}`}>{profile.dataType}</span>
+                    </div>
+
+                    <div className="profile-stats">
+                      <div className="profile-stat">
+                        <span className="profile-stat-label">Rows</span>
+                        <span className="profile-stat-value">{profile.totalRows.toLocaleString()}</span>
+                      </div>
+                      <div className="profile-stat">
+                        <span className="profile-stat-label">Nulls</span>
+                        <span className="profile-stat-value">{profile.nullCount.toLocaleString()}</span>
+                      </div>
+                      <div className="profile-stat">
+                        <span className="profile-stat-label">Distinct</span>
+                        <span className="profile-stat-value">{profile.distinctCount.toLocaleString()}</span>
+                      </div>
+
+                      {profile.dataType === 'numeric' && (
+                        <>
+                          <div className="profile-stat">
+                            <span className="profile-stat-label">Min</span>
+                            <span className="profile-stat-value">{profile.min !== undefined ? profile.min.toLocaleString() : '—'}</span>
+                          </div>
+                          <div className="profile-stat">
+                            <span className="profile-stat-label">Max</span>
+                            <span className="profile-stat-value">{profile.max !== undefined ? profile.max.toLocaleString() : '—'}</span>
+                          </div>
+                          <div className="profile-stat">
+                            <span className="profile-stat-label">Mean</span>
+                            <span className="profile-stat-value">{profile.mean !== undefined ? profile.mean.toFixed(2) : '—'}</span>
+                          </div>
+                          <div className="profile-stat">
+                            <span className="profile-stat-label">Median</span>
+                            <span className="profile-stat-value">{profile.median !== undefined ? profile.median.toFixed(2) : '—'}</span>
+                          </div>
+                          <div className="profile-stat">
+                            <span className="profile-stat-label">StdDev</span>
+                            <span className="profile-stat-value">{profile.stddev !== undefined ? profile.stddev.toFixed(2) : '—'}</span>
+                          </div>
+                        </>
+                      )}
+
+                      {profile.dataType === 'string' && profile.avgLength !== undefined && (
+                        <div className="profile-stat">
+                          <span className="profile-stat-label">Avg Length</span>
+                          <span className="profile-stat-value">{profile.avgLength.toFixed(1)}</span>
+                        </div>
+                      )}
+
+                      {profile.dataType === 'temporal' && (
+                        <>
+                          <div className="profile-stat">
+                            <span className="profile-stat-label">Min Date</span>
+                            <span className="profile-stat-value">{profile.minDate || '—'}</span>
+                          </div>
+                          <div className="profile-stat">
+                            <span className="profile-stat-label">Max Date</span>
+                            <span className="profile-stat-value">{profile.maxDate || '—'}</span>
+                          </div>
+                        </>
+                      )}
+                    </div>
+
+                    {/* Top values distribution bars */}
+                    {profile.topValues && profile.topValues.length > 0 && (
+                      <div className="profile-top-values">
+                        {profile.topValues.map((tv, tvIdx) => {
+                          const maxCount = profile.topValues![0]!.count || 1
+                          return (
+                            <div key={tvIdx} className="profile-top-value-bar">
+                              <span className="profile-top-value-label" title={tv.value}>{tv.value}</span>
+                              <div className="profile-top-value-track">
+                                <div className="profile-top-value-fill" style={{ width: `${(tv.count / maxCount) * 100}%` }} />
+                              </div>
+                              <span className="profile-top-value-count">{tv.count}</span>
+                            </div>
+                          )
+                        })}
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {!profiling && profileResults.length === 0 && (
+              <div className="calc-tip">
+                Click "Profile Columns" to automatically compute statistics for every ingested column.
+              </div>
+            )}
+          </section>
+        )}
       </main>
+
+      {/* Day 3: Drill-Down Modal */}
+      {drillDown && (
+        <div className="drill-modal-overlay" onClick={() => { setDrillDown(null); setDrillDownData(null); }}>
+          <div className="drill-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="drill-modal-header">
+              <div>
+                <div className="drill-modal-title">🔎 Drill-Down: {drillDown.column} = "{drillDown.value}"</div>
+                <div className="drill-modal-subtitle">
+                  Raw rows from {drillDown.widget.title} — filtered by {drillDown.column}
+                </div>
+              </div>
+              <button className="drill-modal-close" onClick={() => { setDrillDown(null); setDrillDownData(null); }}>
+                ×
+              </button>
+            </div>
+
+            {drillDownLoading && (
+              <div style={{ textAlign: 'center', padding: '40px', color: 'var(--text-muted)', fontSize: '0.85rem' }}>
+                Running drill-down query...
+              </div>
+            )}
+
+            {drillDownData && drillDownData.length > 0 && (
+              <div className="table-responsive">
+                <table className="data-table">
+                  <thead>
+                    <tr>
+                      {Object.keys(drillDownData[0]).map((key) => (
+                        <th key={key}>{columnLabels[key] || key}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {drillDownData.map((row, idx) => (
+                      <tr key={idx}>
+                        {Object.keys(row).map((key, cellIdx) => (
+                          <td key={cellIdx}>{formatValue(row[key], columnFormats[key] || 'default')}</td>
+                        ))}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+
+            {drillDownData && drillDownData.length === 0 && !drillDownLoading && (
+              <div style={{ textAlign: 'center', padding: '40px', color: 'var(--text-muted)', fontSize: '0.85rem' }}>
+                No matching rows found.
+              </div>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   )
 }
@@ -1107,15 +1794,24 @@ interface WidgetRendererProps {
   db: duckdb.AsyncDuckDB | null
   rebuildTrigger: string
   onDelete: (id: string) => void
+  onDrillDown: (column: string, value: string, widget: Widget) => void
+  index: number
+  isDragging: boolean
+  isDragOver: boolean
+  onDragStart: (index: number) => void
+  onDragOver: (e: React.DragEvent, index: number) => void
+  onDragLeave: () => void
+  onDrop: (index: number) => void
+  onDragEnd: () => void
 }
 
-function WidgetRenderer({ widget, db, rebuildTrigger, onDelete }: WidgetRendererProps) {
+function WidgetRenderer({ widget, db, rebuildTrigger, onDelete, onDrillDown, index, isDragging, isDragOver, onDragStart, onDragOver, onDragLeave, onDrop, onDragEnd }: WidgetRendererProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const [data, setData] = useState<any[] | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
 
-  const { globalFilters, crossFilters } = useDashboardStore()
+  const { globalFilters, crossFilters, crossFilterExclusions } = useDashboardStore()
   const [showCardinalityWarning, setShowCardinalityWarning] = useState(false)
 
   // Re-run the visual query against DuckDB WASM whenever DB, calculated fields, or filters change
@@ -1140,12 +1836,16 @@ function WidgetRenderer({ widget, db, rebuildTrigger, onDelete }: WidgetRenderer
         })
 
         Object.entries(crossFilters).forEach(([otherWidgetId, cf]) => {
-          if (otherWidgetId !== widget.id && cf && cf.value !== undefined && cf.value !== null && cf.value !== '') {
-            composedFilters.push({
-              column: cf.column,
-              operator: 'EQUALS',
-              value: cf.value
-            })
+          const isTargetExcluded = crossFilterExclusions.includes(widget.id)
+          const isSourceExcluded = crossFilterExclusions.includes(otherWidgetId)
+          if (!isTargetExcluded && !isSourceExcluded) {
+            if (otherWidgetId !== widget.id && cf && cf.value !== undefined && cf.value !== null && cf.value !== '') {
+              composedFilters.push({
+                column: cf.column,
+                operator: 'EQUALS',
+                value: cf.value
+              })
+            }
           }
         })
 
@@ -1187,7 +1887,7 @@ function WidgetRenderer({ widget, db, rebuildTrigger, onDelete }: WidgetRenderer
     return () => {
       active = false
     }
-  }, [db, widget.query, rebuildTrigger, globalFilters, crossFilters])
+  }, [db, widget.query, rebuildTrigger, globalFilters, crossFilters, crossFilterExclusions])
 
   // Draw chart in the visual container using the registered plugin
   useEffect(() => {
@@ -1205,20 +1905,56 @@ function WidgetRenderer({ widget, db, rebuildTrigger, onDelete }: WidgetRenderer
     ? `${measure.aggregation}(${measure.column}) by ${dimension}`
     : 'Custom Visualization'
 
+  const cardClasses = [
+    'card',
+    'widget-card',
+    isDragging ? 'dragging' : '',
+    isDragOver ? 'drag-over' : ''
+  ].filter(Boolean).join(' ')
+
   return (
-    <div className="card widget-card">
+    <div
+      className={cardClasses}
+      draggable="true"
+      onDragStart={() => onDragStart(index)}
+      onDragOver={(e) => onDragOver(e, index)}
+      onDragLeave={onDragLeave}
+      onDrop={() => onDrop(index)}
+      onDragEnd={onDragEnd}
+    >
       <div className="widget-header">
         <div>
           <div className="widget-title">{widget.title}</div>
           <div className="widget-info">{subtitle}</div>
         </div>
-        <button 
-          className="btn-delete"
-          onClick={() => onDelete(widget.id)}
-          title="Delete Widget"
-        >
-          🗑
-        </button>
+        <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
+          {/* Day 3: Drill-down button */}
+          {dimension && (
+            <button
+              className="btn-delete"
+              style={{ color: 'var(--primary-color)', fontSize: '0.8rem' }}
+              onClick={() => {
+                const activeCross = crossFilters[widget.id]
+                if (activeCross) {
+                  onDrillDown(activeCross.column, activeCross.value, widget)
+                } else if (data && data.length > 0 && dimension) {
+                  const firstVal = String(data[0][dimension] || '')
+                  onDrillDown(dimension, firstVal, widget)
+                }
+              }}
+              title="Drill down into data"
+            >
+              🔎
+            </button>
+          )}
+          <button 
+            className="btn-delete"
+            onClick={() => onDelete(widget.id)}
+            title="Delete Widget"
+          >
+            🗑
+          </button>
+        </div>
       </div>
 
       {showCardinalityWarning && (
